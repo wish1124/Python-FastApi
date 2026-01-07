@@ -1,4 +1,3 @@
-import math
 import random
 from copy import deepcopy
 from dataclasses import dataclass
@@ -108,7 +107,7 @@ class CNN1DRegressor(nn.Module):
         )
         self.pool = nn.AdaptiveAvgPool1d(1)  # (B, hidden, 1)
         self.head = nn.Sequential(
-            nn.Flatten(),                    # (B, hidden)
+            nn.Flatten(),                     # (B, hidden)
             nn.Linear(hidden, hidden),
             nn.ReLU(),
             nn.Dropout(dropout),
@@ -118,8 +117,8 @@ class CNN1DRegressor(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, F, 1) -> (B, 1, F)
         x = x.transpose(1, 2)
-        z = self.conv(x)              # (B, hidden, L')
-        z = self.pool(z)              # (B, hidden, 1)
+        z = self.conv(x)               # (B, hidden, L')
+        z = self.pool(z)               # (B, hidden, 1)
         y_hat = self.head(z).squeeze(-1)  # (B,)
         return y_hat
 
@@ -188,6 +187,7 @@ class TrainResult:
     y_scaler: TargetScaler
     best_val: Dict[str, float]
     test: Dict[str, float]
+    history: Dict[str, list]
 
 
 def run_training_cnn1d(
@@ -198,7 +198,7 @@ def run_training_cnn1d(
     val_ratio: float = 0.10,
     seed: int = 42,
     deterministic: bool = True,
-    target_log: bool = True,
+    target_log: bool = True,     # 금액 예측이면 True 권장
     epochs: int = 200,
     batch_size: int = 256,
     lr: float = 1e-2,
@@ -262,7 +262,17 @@ def run_training_cnn1d(
     model = CNN1DRegressor(hidden=hidden, dropout=dropout).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    # 7) Train loop
+    # history
+    history: Dict[str, list] = {
+        "train_loss": [],
+        "val_mse": [],
+        "val_loss": [],  
+        "val_rmse": [],
+        "val_mae": [],
+        "val_mape": [],
+    }
+
+    # 7) Train loop (early stopping by val RMSE on amount scale)
     best_state = None
     best_val_rmse = float("inf")
     best_val_metrics: Dict[str, float] = {}
@@ -272,6 +282,7 @@ def run_training_cnn1d(
         tr_loss = train_one_epoch(model, train_loader, optim, device)
 
         yv_true_s, yv_pred_s = predict(model, val_loader, device)
+        val_loss = float(np.mean((yv_true_s - yv_pred_s) ** 2))
         # inverse y scaling -> y_p space
         yv_true_p = y_scaler.inverse_transform(yv_true_s)
         yv_pred_p = y_scaler.inverse_transform(yv_pred_s)
@@ -284,6 +295,14 @@ def run_training_cnn1d(
             yv_true, yv_pred = yv_true_p, yv_pred_p
 
         val_m = regression_metrics(yv_true, yv_pred)
+
+        # history append (NEW)
+        history["train_loss"].append(float(tr_loss))
+        history["val_loss"].append(val_loss)
+        history["val_mse"].append(float(val_m["MSE"]))
+        history["val_rmse"].append(float(val_m["RMSE"]))
+        history["val_mae"].append(float(val_m["MAE"]))
+        history["val_mape"].append(float(val_m["MAPE"]))
 
         print(
             f"Epoch {epoch:03d} | train_loss={tr_loss:.6f} | "
@@ -304,7 +323,7 @@ def run_training_cnn1d(
     if best_state is not None:
         model.load_state_dict(best_state)
 
-    # 8) Final test
+    # 8) Final test (1 time)
     yt_true_s, yt_pred_s = predict(model, test_loader, device)
     yt_true_p = y_scaler.inverse_transform(yt_true_s)
     yt_pred_p = y_scaler.inverse_transform(yt_pred_s)
@@ -324,12 +343,9 @@ def run_training_cnn1d(
         y_scaler=y_scaler,
         best_val=best_val_metrics,
         test=test_m,
+        history=history,
     )
 
+
 if __name__ == "__main__":
-    # CSV를 쓰는 경우:
-    # df = pd.read_csv("test_bid_4features.csv")
-    # res = run_training_cnn1d(df)
-    # print("Best VAL:", res.best_val)
-    # print("TEST:", res.test)
     pass

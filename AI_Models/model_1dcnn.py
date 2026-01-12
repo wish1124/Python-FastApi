@@ -9,6 +9,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
+import os
+import matplotlib.pyplot as plt
+
+
 
 # Reproducibility
 
@@ -198,7 +202,7 @@ def run_training_cnn1d(
     val_ratio: float = 0.10,
     seed: int = 42,
     deterministic: bool = True,
-    target_log: bool = True,     # 금액 예측이면 True 권장
+    target_log: bool = True,
     epochs: int = 200,
     batch_size: int = 256,
     lr: float = 1e-2,
@@ -206,145 +210,142 @@ def run_training_cnn1d(
     patience: int = 20,
     hidden: int = 64,
     dropout: float = 0.1,
+    output_dir: str = "./results"  # [추가] 결과 저장 경로
 ) -> TrainResult:
+    
+    # 결과 저장 디렉토리 생성
+    os.makedirs(output_dir, exist_ok=True)
+    
     seed_everything(seed, deterministic=deterministic)
 
-    # 1) load + numeric
+    # 1) 데이터 로드 및 전처리
     use_cols = list(feature_cols) + [target_col]
-    missing = [c for c in use_cols if c not in df.columns]
-    if missing:
-        raise KeyError(f"Missing columns: {missing}")
-
     work = df[use_cols].copy()
-    for c in feature_cols:
+    for c in use_cols:
         work[c] = pd.to_numeric(work[c], errors="coerce")
-    work[target_col] = pd.to_numeric(work[target_col], errors="coerce")
-    work = work.dropna(subset=use_cols).reset_index(drop=True)
+    work = work.dropna().reset_index(drop=True)
 
-    if len(work) < 50:
-        raise ValueError(f"유효 데이터가 너무 적습니다: {len(work)} rows (권장: 최소 수십~수백 이상)")
+    X = work[list(feature_cols)].to_numpy(np.float32)
+    y_raw = work[target_col].to_numpy(np.float32)
 
-    X = work[list(feature_cols)].to_numpy(np.float32)  # (N, F)
-    y_raw = work[target_col].to_numpy(np.float32)      # (N,)
-
-    # 2) split
-    train_idx, val_idx, test_idx = split_indices(len(work), test_ratio, val_ratio, seed)
-
-    X_train, X_val, X_test = X[train_idx], X[val_idx], X[test_idx]
-    y_train_raw, y_val_raw, y_test_raw = y_raw[train_idx], y_raw[val_idx], y_raw[test_idx]
-
-    # 3) X scale
-    x_scaler = StandardScaler().fit(X_train)
-    X_train_s = x_scaler.transform(X_train)
-    X_val_s = x_scaler.transform(X_val)
-    X_test_s = x_scaler.transform(X_test)
-
-    # 4) y preprocess: log1p -> standardize
+    # 타겟 로그 변환 (옵션)
     if target_log:
-        y_train_p = np.log1p(y_train_raw)
-        y_val_p = np.log1p(y_val_raw)
-        y_test_p = np.log1p(y_test_raw)
-    else:
-        y_train_p, y_val_p, y_test_p = y_train_raw, y_val_raw, y_test_raw
+        y_raw = np.log1p(y_raw)
 
-    y_scaler = TargetScaler().fit(y_train_p)
-    y_train_s = y_scaler.transform(y_train_p)
-    y_val_s = y_scaler.transform(y_val_p)
-    y_test_s = y_scaler.transform(y_test_p)
+    # 2) 데이터 분할
+    train_idx, val_idx, test_idx = split_indices(len(X), test_ratio, val_ratio, seed)
 
-    # 5) Dataset/Loader
-    train_loader = DataLoader(FeatureSeqDataset(X_train_s, y_train_s), batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(FeatureSeqDataset(X_val_s, y_val_s), batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(FeatureSeqDataset(X_test_s, y_test_s), batch_size=batch_size, shuffle=False)
+    # 3) 스케일링 (Train 기준으로 Fit)
+    x_scaler = StandardScaler().fit(X[train_idx])
+    X_scaled = x_scaler.transform(X)
 
-    # 6) Model
+    y_scaler = TargetScaler().fit(y_raw[train_idx])
+    y_scaled = y_scaler.transform(y_raw)
+
+    # 4) 데이터셋 및 로더 생성
+    train_ds = FeatureSeqDataset(X_scaled[train_idx], y_scaled[train_idx])
+    val_ds = FeatureSeqDataset(X_scaled[val_idx], y_scaled[val_idx])
+    test_ds = FeatureSeqDataset(X_scaled[test_idx], y_scaled[test_idx])
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+
+    # 5) 모델 초기화
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = CNN1DRegressor(hidden=hidden, dropout=dropout).to(device)
-    optim = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optim = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    # history
-    history: Dict[str, list] = {
-        "train_loss": [],
-        "val_mse": [],
-        "val_loss": [],  
-        "val_rmse": [],
-        "val_mae": [],
-        "val_mape": [],
-    }
-
-    # 7) Train loop (early stopping by val RMSE on amount scale)
+    # 6) 학습 루프
+    best_loss = float("inf")
     best_state = None
-    best_val_rmse = float("inf")
-    best_val_metrics: Dict[str, float] = {}
-    bad = 0
+    no_improve = 0
+    history = {"train_loss": [], "val_loss": []}
 
+    print(f"Start Training on {device}...")
     for epoch in range(1, epochs + 1):
-        tr_loss = train_one_epoch(model, train_loader, optim, device)
+        train_loss = train_one_epoch(model, train_loader, optim, device)
+        
+        # Validation 평가
+        model.eval()
+        val_ys, val_preds = predict(model, val_loader, device)
+        val_mse = np.mean((val_ys - val_preds) ** 2)
+        
+        history["train_loss"].append(train_loss)
+        history["val_loss"].append(val_mse)
 
-        yv_true_s, yv_pred_s = predict(model, val_loader, device)
-        val_loss = float(np.mean((yv_true_s - yv_pred_s) ** 2))
-        # inverse y scaling -> y_p space
-        yv_true_p = y_scaler.inverse_transform(yv_true_s)
-        yv_pred_p = y_scaler.inverse_transform(yv_pred_s)
-
-        # convert to amount scale for metrics
-        if target_log:
-            yv_true = np.expm1(yv_true_p)
-            yv_pred = np.expm1(yv_pred_p)
+        if val_mse < best_loss:
+            best_loss = val_mse
+            best_state = deepcopy(model.state_dict())
+            no_improve = 0
         else:
-            yv_true, yv_pred = yv_true_p, yv_pred_p
-
-        val_m = regression_metrics(yv_true, yv_pred)
-
-        # history append (NEW)
-        history["train_loss"].append(float(tr_loss))
-        history["val_loss"].append(val_loss)
-        history["val_mse"].append(float(val_m["MSE"]))
-        history["val_rmse"].append(float(val_m["RMSE"]))
-        history["val_mae"].append(float(val_m["MAE"]))
-        history["val_mape"].append(float(val_m["MAPE"]))
-
-        print(
-            f"Epoch {epoch:03d} | train_loss={tr_loss:.6f} | "
-            f"val_RMSE={val_m['RMSE']:.4f} | val_MAE={val_m['MAE']:.4f} | val_MAPE={val_m['MAPE']:.2f}"
-        )
-
-        if val_m["RMSE"] < best_val_rmse:
-            best_val_rmse = val_m["RMSE"]
-            best_val_metrics = val_m
-            best_state = deepcopy({k: v.detach().cpu() for k, v in model.state_dict().items()})
-            bad = 0
-        else:
-            bad += 1
-            if bad >= patience:
-                print(f"Early stopping (patience={patience}).")
+            no_improve += 1
+            if no_improve >= patience:
+                print(f"Early stopping at epoch {epoch}")
                 break
+        
+        if epoch % 10 == 0:
+            print(f"Epoch {epoch}/{epochs} | Train: {train_loss:.4f} | Val: {val_mse:.4f}")
 
+    # 7) [추가] 모델 저장 (.pt 파일)
     if best_state is not None:
         model.load_state_dict(best_state)
+        save_path = os.path.join(output_dir, "best_model.pt")
+        torch.save(best_state, save_path)
+        print(f"Saved best model to {save_path}")
 
-    # 8) Final test (1 time)
-    yt_true_s, yt_pred_s = predict(model, test_loader, device)
-    yt_true_p = y_scaler.inverse_transform(yt_true_s)
-    yt_pred_p = y_scaler.inverse_transform(yt_pred_s)
+    # 8) [추가] 학습 결과 시각화 1: Train/Val Loss 그래프
+    plt.figure(figsize=(10, 6))
+    plt.plot(history['train_loss'], label='Train Loss')
+    plt.plot(history['val_loss'], label='Val Loss')
+    plt.title('Training & Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss (MSE)')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(output_dir, 'loss_history.png'))
+    plt.close()
 
+    # 9) 최종 테스트 평가
+    test_ys, test_preds = predict(model, test_loader, device)
+    
+    # 스케일 역변환 (원래 가격 단위로 복구)
+    real_y = y_scaler.inverse_transform(test_ys)
+    pred_y = y_scaler.inverse_transform(test_preds)
+    
     if target_log:
-        yt_true = np.expm1(yt_true_p)
-        yt_pred = np.expm1(yt_pred_p)
-    else:
-        yt_true, yt_pred = yt_true_p, yt_pred_p
+        real_y = np.expm1(real_y)
+        pred_y = np.expm1(pred_y)
 
-    test_m = regression_metrics(yt_true, yt_pred)
-    print(f"[FINAL TEST] RMSE={test_m['RMSE']:.4f} | MAE={test_m['MAE']:.4f} | MAPE={test_m['MAPE']:.2f}")
+    metrics = regression_metrics(real_y, pred_y)
+    print(f"Test Metrics: {metrics}")
+
+    # 10) [추가] 학습 결과 시각화 2: Prediction vs Actual (Confusion Matrix 대체)
+    plt.figure(figsize=(8, 8))
+    plt.scatter(real_y, pred_y, alpha=0.5, s=10)
+    
+    # 기준선 (Perfect Prediction Line)
+    min_val = min(real_y.min(), pred_y.min())
+    max_val = max(real_y.max(), pred_y.max())
+    plt.plot([min_val, max_val], [min_val, max_val], 'r--', label='Perfect Fit')
+    
+    plt.title(f'Actual vs Predicted (Test Set)\nMAE: {metrics["MAE"]:.2f}, RMSE: {metrics["RMSE"]:.2f}')
+    plt.xlabel('Actual Value')
+    plt.ylabel('Predicted Value')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(output_dir, 'prediction_scatter.png'))
+    plt.close()
 
     return TrainResult(
         model=model,
         x_scaler=x_scaler,
         y_scaler=y_scaler,
-        best_val=best_val_metrics,
-        test=test_m,
-        history=history,
+        best_val={"MSE": best_loss},
+        test=metrics,
+        history=history
     )
+
 
 
 if __name__ == "__main__":

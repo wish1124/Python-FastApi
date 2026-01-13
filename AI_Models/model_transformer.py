@@ -104,7 +104,7 @@ class TransformerRegressor(nn.Module):
     def __init__(
         self,
         num_features: int = 4,
-        d_model: int = 64,
+        d_model: int = 512,
         nhead: int = 4,
         num_layers: int = 2,
         dim_feedforward: int = 128,
@@ -187,14 +187,25 @@ class TransformerRegressor(nn.Module):
 
 # Metrics
 
+# Metrics
 def regression_metrics(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1e-8) -> Dict[str, float]:
     y_true = np.asarray(y_true, dtype=np.float64)
     y_pred = np.asarray(y_pred, dtype=np.float64)
+
     mse = np.mean((y_true - y_pred) ** 2)
     rmse = float(np.sqrt(mse))
     mae = float(np.mean(np.abs(y_true - y_pred)))
     mape = float(np.mean(np.abs((y_true - y_pred) / (np.abs(y_true) + eps))) * 100.0)
-    return {"MSE": float(mse), "RMSE": rmse, "MAE": mae, "MAPE": mape}
+    
+    # [추가] R2 Score 계산
+    ss_res = np.sum((y_true - y_pred) ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    
+    # 분모가 0이 되는 것을 방지하기 위해 eps 더함
+    r2 = 1 - (ss_res / (ss_tot + eps))
+
+    return {"MSE": float(mse), "RMSE": rmse, "MAE": mae, "MAPE": mape, "R2": float(r2)}
+
 
 
 @torch.no_grad()
@@ -422,7 +433,8 @@ def run_training_transformer(
         yt_true, yt_pred = yt_true_p, yt_pred_p
 
     test_m = regression_metrics(yt_true, yt_pred)
-    print(f"[FINAL TEST] RMSE={test_m['RMSE']:.4f} | MAE={test_m['MAE']:.4f} | MAPE={test_m['MAPE']:.2f}")
+    print(f"[FINAL TEST] RMSE={test_m['RMSE']:.4f} | MAE={test_m['MAE']:.4f} | MAPE={test_m['MAPE']:.2f} | R2={test_m['R2']:.4f}")
+
 
     # Scatter Plot 저장 (Prediction vs Actual)
     plt.figure(figsize=(8, 8))
@@ -433,7 +445,7 @@ def run_training_transformer(
     max_val = max(yt_true.max(), yt_pred.max())
     plt.plot([min_val, max_val], [min_val, max_val], 'r--', label='Perfect Fit')
     
-    plt.title(f'Transformer: Actual vs Predicted\nRMSE: {test_m["RMSE"]:.2f}, MAE: {test_m["MAE"]:.2f}')
+    plt.title(f'Transformer: Actual vs Predicted\nRMSE: {test_m["RMSE"]:.2f}, MAE: {test_m["MAE"]:.2f}, R2: {test_m["R2"]:.4f}')
     plt.xlabel('Actual Value')
     plt.ylabel('Predicted Value')
     plt.legend()

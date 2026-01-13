@@ -87,7 +87,7 @@ df_time[derived_cols] = df_time[derived_cols].fillna(df_time[derived_cols].media
 
 
 num_cols=[
-    "govsplyAmt","presmptPrce","bdgtAmt"
+    "govsplyAmt","presmptPrce","bdgtAmt","VAT"
 ]
 
 for col in num_cols:

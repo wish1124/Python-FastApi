@@ -1,3 +1,7 @@
+<<<<<<< HEAD
+=======
+import json
+>>>>>>> origin/RAG
 import random
 from copy import deepcopy
 from dataclasses import dataclass
@@ -293,6 +297,18 @@ def run_training_cnn1d(
         save_path = os.path.join(output_dir, "best_model.pt")
         torch.save(best_state, save_path)
         print(f"Saved best model to {save_path}")
+
+    scaler_cfg = {
+        "x_mean": x_scaler.mean_.tolist(),
+        "x_std": x_scaler.std_.tolist(),
+        "y_mean": y_scaler.mean_,
+        "y_std": y_scaler.std_,
+        "target_log": target_log,
+        "feature_cols": list(feature_cols),
+    }
+    with open(os.path.join(output_dir, "scalers.json"), "w", encoding="utf-8") as f:
+        json.dump(scaler_cfg, f, ensure_ascii=False, indent=2)
+    print(f"Saved scalers to {os.path.join(output_dir, 'scalers.json')}")
 
     # 8) [추가] 학습 결과 시각화 1: Train/Val Loss 그래프
     plt.figure(figsize=(10, 6))

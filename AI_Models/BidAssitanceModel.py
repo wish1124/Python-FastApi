@@ -653,10 +653,11 @@ class BidRequirements(BaseModel):
 # ------------------------------
 
 class GraphState(TypedDict, total=False):
-    # messages를 Annotated로 감싸고 add_messages 리듀서 적용
-    messages: Annotated[List[Any], add_messages] 
+    messages: Annotated[List[Any], add_messages]
     requirements: Dict[str, Any]
+    prediction_result: Dict[str, Any]  # <--- 추가
     report_markdown: str
+
 
 # ------------------------------
 # RAG index (FAISS)
@@ -780,8 +781,8 @@ class BidRAGPipeline:
             award_predict_fn=award_predict_fn,
         )
 
-        self.tools = self._build_tools()
-        self.tool_node = ToolNode(self.tools)
+        # self.tools = self._build_tools()
+        # self.tool_node = ToolNode(self.tools)
         self.graph = self._build_graph()
 
     def _init_award_predictor(
@@ -855,116 +856,142 @@ class BidRAGPipeline:
                 model_info={"type": "error_fallback", "path": award_model_path},
             )
 
-    def _build_tools(self) -> List[Any]:
-        index = self.index
-        top_k = self.top_k
+    # BidRAGPipeline 클래스 내부에 메서드 추가
 
-        @tool
-        def rag_retrieve(query: str) -> str:
-            """유사 공고/낙찰사례 검색(RAG)."""
-            chunks = index.retrieve(query=query, k=top_k)
-            if not chunks:
-                return "(검색 결과 없음)"
-            chunks = [c[:1200] for c in chunks]
-            return "\n\n---\n\n".join(chunks)
+    def _node_predict(self, state: GraphState) -> GraphState:
+        reqs = state.get("requirements", {})
 
-        @tool
-        def predict_award_price(requirements_json: str, retrieved_context: str) -> str:
-            """낙찰가 예측 Tool (ToolNode 블록)."""
-            try:
-                reqs = json.loads(requirements_json)
-                if not isinstance(reqs, dict):
-                    reqs = {}
-            except Exception:
-                reqs = {}
+        # RAG 검색이 필요 없으면 빈 문자열, 필요하면 여기서 검색
+        # (질문에서 '사전 학습 모델만'이라고 하셨으므로 RAG 제외)
+        retrieved_context = "" 
 
-            try:
-                result = self.award_predictor.predict(reqs, retrieved_context or "")
-            except Exception as e:
-                result = {
-                    "currency": "KRW",
-                    "predicted_min": None,
-                    "predicted_max": None,
-                    "point_estimate": None,
-                    "confidence": "low",
-                    "rationale": [
-                        "낙찰가 예측 중 예외가 발생했습니다. 모델/피처 파이프라인을 점검하세요.",
-                        f"예외: {type(e).__name__}: {str(e)}",
-                    ],
-                    "model": {"type": "runtime_error"},
-                }
-
-            if not isinstance(result, dict):
-                result = {
-                    "currency": "KRW",
-                    "predicted_min": None,
-                    "predicted_max": None,
-                    "point_estimate": None,
-                    "confidence": "low",
-                    "rationale": ["낙찰가 예측 모델 출력이 dict가 아니어서 처리할 수 없습니다."],
-                    "model": {"type": "invalid_output"},
-                }
-
-            return json.dumps(result, ensure_ascii=False)
-
-        @tool
-        def competitor_analysis(requirements_json: str, retrieved_context: str) -> str:
-            """경쟁낙찰/경쟁사 시그널(경량 heuristic)."""
-            try:
-                reqs = json.loads(requirements_json)
-                if not isinstance(reqs, dict):
-                    reqs = {}
-            except Exception:
-                reqs = {}
-
-            text = retrieved_context or ""
-            candidates: Dict[str, int] = {}
-            for m in re.findall(r"([가-힣A-Za-z0-9&()]{2,40})(?:\s*\(주\)|\s*㈜)", text):
-                name = _clean_whitespace(m)
-                if 2 <= len(name) <= 40:
-                    candidates[name] = candidates.get(name, 0) + 1
-            sorted_names = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
-            top_names = [n for n, _ in sorted_names[:8]]
-
-            barriers = []
-            if len(reqs.get("qualification_requirements", [])) >= 5:
-                barriers.append("참가자격 요건이 다수로 보이며, 자격 충족이 1차 필터로 작동할 가능성이 큽니다.")
-            if len(reqs.get("performance_requirements", [])) >= 5:
-                barriers.append("유사실적/실적요건이 강해 신규/중소 사업자 진입이 제한될 수 있습니다.")
-            if reqs.get("bid_method"):
-                barriers.append(f"평가/낙찰 방식({reqs.get('bid_method')})에 따라 기술/가격 전략이 달라집니다.")
-
-            result = {
-                "likely_competitors": top_names or [],
-                "market_signals": barriers,
-                "recommended_positioning": [
-                    "요구사항 매핑표(요구사항-근거-증빙)를 제안서 최상단에 배치해 누락 리스크를 제거합니다.",
-                    "유사실적/핵심인력/품질(보안/안전) 체계를 명확히 제시해 기술평가 리스크를 낮춥니다.",
-                    "낙찰가 전략은 '예측값 + 유사 낙찰사례 분포 + 내부 원가/마진'으로 최종 결정합니다.",
-                ],
-                "confidence": "low" if retrieved_context in ("", "(검색 결과 없음)") else "medium",
+        try:
+            # 1. 모델 예측 수행 (Heuristic 또는 CNN)
+            pred_result = self.award_predictor.predict(reqs, retrieved_context)
+        except Exception as e:
+            pred_result = {
+                "error": str(e),
+                "confidence": "low",
+                "rationale": ["예측 모델 실행 중 오류 발생"]
             }
-            return json.dumps(result, ensure_ascii=False)
 
-        return [rag_retrieve, predict_award_price, competitor_analysis]
+        # 2. 결과를 state에 저장 (리포트 작성 시 참고하도록)
+        # 기존 requirements나 별도 필드에 저장
+        state["prediction_result"] = pred_result
+
+        # 3. LLM이 이해하기 쉽도록 messages에도 요약 정보 추가 (선택사항)
+        pred_json = json.dumps(pred_result, ensure_ascii=False)
+        sys_msg = SystemMessage(content=f"[낙찰가 예측 모델 결과]\n{pred_json}")
+
+        # state가 Annotated로 수정되었다면 리스트 반환, 아니면 + 연산
+        # (여기서는 앞서 수정한 Annotated 방식을 가정하여 리스트 반환)
+        return {"messages": [sys_msg], "prediction_result": pred_result}
+
+    # def _build_tools(self) -> List[Any]:
+    #     index = self.index
+    #     top_k = self.top_k
+
+    #     @tool
+    #     def rag_retrieve(query: str) -> str:
+    #         """유사 공고/낙찰사례 검색(RAG)."""
+    #         chunks = index.retrieve(query=query, k=top_k)
+    #         if not chunks:
+    #             return "(검색 결과 없음)"
+    #         chunks = [c[:1200] for c in chunks]
+    #         return "\n\n---\n\n".join(chunks)
+
+    #     @tool
+    #     def predict_award_price(requirements_json: str, retrieved_context: str) -> str:
+    #         """낙찰가 예측 Tool (ToolNode 블록)."""
+    #         try:
+    #             reqs = json.loads(requirements_json)
+    #             if not isinstance(reqs, dict):
+    #                 reqs = {}
+    #         except Exception:
+    #             reqs = {}
+
+    #         try:
+    #             result = self.award_predictor.predict(reqs, retrieved_context or "")
+    #         except Exception as e:
+    #             result = {
+    #                 "currency": "KRW",
+    #                 "predicted_min": None,
+    #                 "predicted_max": None,
+    #                 "point_estimate": None,
+    #                 "confidence": "low",
+    #                 "rationale": [
+    #                     "낙찰가 예측 중 예외가 발생했습니다. 모델/피처 파이프라인을 점검하세요.",
+    #                     f"예외: {type(e).__name__}: {str(e)}",
+    #                 ],
+    #                 "model": {"type": "runtime_error"},
+    #             }
+
+    #         if not isinstance(result, dict):
+    #             result = {
+    #                 "currency": "KRW",
+    #                 "predicted_min": None,
+    #                 "predicted_max": None,
+    #                 "point_estimate": None,
+    #                 "confidence": "low",
+    #                 "rationale": ["낙찰가 예측 모델 출력이 dict가 아니어서 처리할 수 없습니다."],
+    #                 "model": {"type": "invalid_output"},
+    #             }
+
+    #         return json.dumps(result, ensure_ascii=False)
+
+    #     @tool
+    #     def competitor_analysis(requirements_json: str, retrieved_context: str) -> str:
+    #         """경쟁낙찰/경쟁사 시그널(경량 heuristic)."""
+    #         try:
+    #             reqs = json.loads(requirements_json)
+    #             if not isinstance(reqs, dict):
+    #                 reqs = {}
+    #         except Exception:
+    #             reqs = {}
+
+    #         text = retrieved_context or ""
+    #         candidates: Dict[str, int] = {}
+    #         for m in re.findall(r"([가-힣A-Za-z0-9&()]{2,40})(?:\s*\(주\)|\s*㈜)", text):
+    #             name = _clean_whitespace(m)
+    #             if 2 <= len(name) <= 40:
+    #                 candidates[name] = candidates.get(name, 0) + 1
+    #         sorted_names = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
+    #         top_names = [n for n, _ in sorted_names[:8]]
+
+    #         barriers = []
+    #         if len(reqs.get("qualification_requirements", [])) >= 5:
+    #             barriers.append("참가자격 요건이 다수로 보이며, 자격 충족이 1차 필터로 작동할 가능성이 큽니다.")
+    #         if len(reqs.get("performance_requirements", [])) >= 5:
+    #             barriers.append("유사실적/실적요건이 강해 신규/중소 사업자 진입이 제한될 수 있습니다.")
+    #         if reqs.get("bid_method"):
+    #             barriers.append(f"평가/낙찰 방식({reqs.get('bid_method')})에 따라 기술/가격 전략이 달라집니다.")
+
+    #         result = {
+    #             "likely_competitors": top_names or [],
+    #             "market_signals": barriers,
+    #             "recommended_positioning": [
+    #                 "요구사항 매핑표(요구사항-근거-증빙)를 제안서 최상단에 배치해 누락 리스크를 제거합니다.",
+    #                 "유사실적/핵심인력/품질(보안/안전) 체계를 명확히 제시해 기술평가 리스크를 낮춥니다.",
+    #                 "낙찰가 전략은 '예측값 + 유사 낙찰사례 분포 + 내부 원가/마진'으로 최종 결정합니다.",
+    #             ],
+    #             "confidence": "low" if retrieved_context in ("", "(검색 결과 없음)") else "medium",
+    #         }
+    #         return json.dumps(result, ensure_ascii=False)
+
+    #     return [rag_retrieve, predict_award_price, competitor_analysis]
 
     def _build_graph(self):
         workflow = StateGraph(GraphState)
 
+        # 노드 등록
         workflow.add_node("extract", self._node_extract)
-        workflow.add_node("agent", self._node_agent)
-        workflow.add_node("tools", self.tool_node)
+        workflow.add_node("predict", self._node_predict)  
         workflow.add_node("report", self._node_report)
 
+        # 엣지 연결 (조건문 없이 직렬 연결)
         workflow.add_edge(START, "extract")
-        workflow.add_edge("extract", "agent")
-
-        workflow.add_conditional_edges(
-            "agent",
-            self._should_continue,
-            {"tools": "tools", "report": "report"},
-        )
-        workflow.add_edge("tools", "agent")
+        workflow.add_edge("extract", "predict")
+        workflow.add_edge("predict", "report")
         workflow.add_edge("report", END)
 
         return workflow.compile(checkpointer=MemorySaver())
@@ -1063,7 +1090,10 @@ class BidRAGPipeline:
 
     def _node_report(self, state: GraphState) -> GraphState:
         reqs = state.get("requirements", {})
+        pred = state.get("prediction_result", {}) # <--- 예측 결과 가져오기
+
         reqs_json = json.dumps(reqs, ensure_ascii=False)
+        pred_json = json.dumps(pred, ensure_ascii=False)
         messages = state.get("messages", [])
 
         sys = SystemMessage(
@@ -1074,15 +1104,16 @@ class BidRAGPipeline:
                 "필수 섹션(순서 유지):\n"
                 "# 1. 공고 요약\n"
                 "# 2. 참가자격/실적/제출서류 체크리스트\n"
-                "# 3. RAG 근거 요약(유사 공고/낙찰사례 핵심)\n"
-                "# 4. 낙찰가 예측(범위/포인트/근거/리스크)\n"
-                "# 5. 경쟁낙찰/경쟁사 시그널(가능 경쟁사, 포지셔닝)\n"
-                "# 6. 권고 액션(다음 72시간 To-Do)\n\n"
+                "# 3. 낙찰가 예측(범위/포인트/근거/리스크)\n"
+                "# 4. 권고 액션(다음 72시간 To-Do)\n\n"
                 "제약: 근거가 불충분하면 '가정'으로 명시하고 추가 수집 항목을 제시하라."
             )
         )
 
-        ctx = SystemMessage(content="[추출된 요구사항 JSON]\n" + reqs_json)
+        ctx = SystemMessage(content=(
+        f"[추출된 요구사항]\n{reqs_json}\n\n"
+        f"[낙찰가 예측 모델 결과]\n{pred_json}"
+        ))
         final = self.llm.invoke([sys, ctx] + messages)
         report = final.content if isinstance(final, AIMessage) else str(final)
         state["report_markdown"] = report
@@ -1109,6 +1140,14 @@ class BidRAGPipeline:
 if __name__ == "__main__":
     import argparse
     import sys
+    from datetime import datetime
+    import uuid
+
+    try:
+        from md2pdf.md2pdf import md2pdf
+    except ImportError:
+        print("ERROR: md2pdf not installed. Run: pip install md2pdf")
+        sys.exit(1)
 
     parser = argparse.ArgumentParser(description="Bid Assistance RAG Pipeline")
     parser.add_argument("--doc_dir", default="./rag_corpus")
@@ -1153,4 +1192,45 @@ if __name__ == "__main__":
         award_dropout=args.award_dropout,
     )
     out = pipe.analyze(text)
+    markdown_content = out["report_markdown"]
     print(out["report_markdown"])
+
+    # 3. 출력 디렉토리 생성
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # 4. PDF 저장 경로 결정
+    if args.output_pdf:
+        pdf_path = args.output_pdf
+    else:
+        # 자동으로 고유한 파일명 생성
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_id = str(uuid.uuid4())[:8]
+        pdf_filename = f"analysis_report_{file_id}_{timestamp}.pdf"
+        pdf_path = os.path.join(args.output_dir, pdf_filename)
+
+    # 5. 마크다운 → PDF 변환
+    try:
+        md2pdf(
+            md_file_contents=markdown_content,
+            output_file=pdf_path
+        )
+        print(f"✓ PDF 저장 완료: {pdf_path}")
+    except Exception as e:
+        print(f"✗ PDF 변환 실패: {e}")
+        # 실패해도 마크다운은 출력
+        print("\n--- Markdown Content (PDF 변환 실패) ---\n")
+        print(markdown_content)
+        sys.exit(1)
+
+    # 6. 결과 출력 (마크다운 원본도 출력하려면)
+    print("\n--- Generated Report (Markdown) ---\n")
+    print(markdown_content)
+    
+    # 7. 백엔드로 전송할 정보 (JSON)
+    result_json = {
+        "pdf_path": pdf_path,
+        "summary_link": pdf_path,  # 또는 상대경로: f"/reports/{os.path.basename(pdf_path)}"
+        "requirements": out["requirements"],
+    }
+    print("\n--- Payload to Backend ---\n")
+    print(json.dumps(result_json, indent=2, ensure_ascii=False))

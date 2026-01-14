@@ -44,7 +44,7 @@ import importlib.util
 import json
 import os
 import re
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypedDict
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypedDict, Annotated
 
 from pydantic import BaseModel, Field
 
@@ -58,7 +58,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import ToolNode
-
+from langgraph.graph.message import add_messages 
 
 # ------------------------------
 # Utilities
@@ -653,10 +653,10 @@ class BidRequirements(BaseModel):
 # ------------------------------
 
 class GraphState(TypedDict, total=False):
-    messages: List[Any]
+    # messages를 Annotated로 감싸고 add_messages 리듀서 적용
+    messages: Annotated[List[Any], add_messages] 
     requirements: Dict[str, Any]
     report_markdown: str
-
 
 # ------------------------------
 # RAG index (FAISS)

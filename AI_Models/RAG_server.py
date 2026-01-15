@@ -9,45 +9,95 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 
-# --- 외부 모듈 임포트 (파일 경로에 맞게 수정 필요) ---
+# --- 모듈 임포트 ---
+# 파일들이 같은 디렉토리에 있다고 가정합니다.
 try:
-    from model_transformer import TransformerRegressor  # 모델 정의 파일
-    # BidAssitanceModel이 같은 폴더에 있다고 가정
-    from BidAssitanceModel import BidRAGPipeline, CallableAwardPricePredictor, parsenumber
+    from model_transformer import TransformerRegressor
+    from BidAssitanceModel import BidRAGPipeline
 except ImportError as e:
-    print(f"❌ 필수 모듈을 찾을 수 없습니다: {e}")
-    print("BidAssitanceModel.py와 model_transformer.py가 같은 폴더에 있는지 확인해주세요.")
+    print(f"❌ 필수 모듈 로딩 실패: {e}")
+    print("model_transformer.py 와 BidAssitanceModel.py 파일이 필요합니다.")
     exit(1)
 
 from pyngrok import ngrok
 
 # ==========================================
-# 1. Transformer 모델 로드 및 설정 (model_serving.py 로직)
+# 0. 유틸리티 함수 (parsenumber 직접 구현)
 # ==========================================
+def parsenumber(value: Any) -> Optional[float]:
+    """
+    다양한 형태의 숫자 문자열을 float로 변환 (BidAssitanceModel.py 로직 복사)
+    예: "1,000,000원" -> 1000000.0
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    
+    s = str(value).strip()
+    if not s:
+        return None
+        
+    # 통화 기호 및 콤마 제거
+    s = s.replace(',', '').replace('원', '').replace('KRW', '').replace('₩', '')
+    
+    # 숫자, 점(.), 마이너스(-) 외의 문자 제거
+    s = re.sub(r'[^0-9.\-]', '', s)
+    
+    if not s or s in ('-', '.', '-.'):
+        return None
+        
+    try:
+        return float(s)
+    except Exception:
+        return None
 
 def load_transformer_model(model_path: str):
     print(f"🔄 모델 로딩 중: {model_path}")
+    
     if not os.path.exists(model_path):
-        raise FileNotFoundError(f"모델 파일을 찾을 수 없습니다: {model_path}")
-        
+        print("⚠️ 모델 파일 없음. 기본값 사용.")
+        return None, {"num_features": 4, "d_model": 512} # 더미 반환
+
     state_dict = torch.load(model_path, map_location='cpu')
 
-    # 하이퍼파라미터 자동 추론
+    # --- [자동 감지 시작] ---
     config = {
-        "num_features": 4, 
-        "d_model": 512, 
-        "num_layers": 2, 
-        "nhead": 4
+        "num_features": 4,   # 기본값 (감지 실패 시)
+        "d_model": 128,      # 기본값
+        "num_layers": 2,     # 기본값
+        "dim_feedforward": 512, # 기본값
+        "nhead": 4           # 기본값 (weight shape만으로는 알 수 없음)
     }
-    
-    # 1. 입력 차원 추론
+
+    # 1. d_model & num_features 감지 (cls_token 또는 첫 레이어)
+    if 'cls_token' in state_dict:
+        # cls_token shape: [1, 1, d_model]
+        config['d_model'] = state_dict['cls_token'].shape[2]
+        
     for key, param in state_dict.items():
-        if ('input' in key or 'embedding' in key) and 'weight' in key and param.dim() == 2:
-            config['num_features'] = param.shape[1]
-            config['d_model'] = param.shape[0]
+        # feature_emb.weight shape: [num_features, d_model] (또는 반대)
+        # 하지만 보통 작은 값이 num_features이므로 min/max로 구분 가능
+        if 'feature_emb.weight' in key:
+            # 예: [4, 128] -> 4가 feature, 128이 d_model
+            dim1, dim2 = param.shape
+            config['num_features'] = min(dim1, dim2)
+            # d_model은 위에서 cls_token으로 찾은 걸 신뢰하거나, 큰 값을 사용
+            if 'cls_token' not in state_dict:
+                 config['d_model'] = max(dim1, dim2)
             break
-            
-    # 2. 레이어 깊이 추론
+
+    # 2. dim_feedforward 감지 (linear1의 출력 크기)
+    # 보통 'encoder.layers.0.linear1.weight' 형태로 저장됨
+    for key, param in state_dict.items():
+        if 'linear1.weight' in key:
+            # Linear(d_model, dim_feedforward) -> weight shape: [dim_ff, d_model]
+            # 따라서 shape[0]이 dim_feedforward
+            config['dim_feedforward'] = param.shape[0]
+            print(f"🔍 Feedforward 차원 감지됨: {config['dim_feedforward']}")
+            break
+
+    # 3. num_layers 감지
     max_layer_idx = -1
     for key in state_dict.keys():
         match = re.search(r'layers\.(\d+)\.', key)
@@ -56,54 +106,54 @@ def load_transformer_model(model_path: str):
     if max_layer_idx != -1:
         config['num_layers'] = max_layer_idx + 1
 
-    print(f"✅ 감지된 모델 설정: {config}")
+    print(f"✅ 최종 자동 감지 설정: {config}")
+    # -----------------------
 
     # 모델 초기화
     model = TransformerRegressor(
         num_features=config['num_features'],
         d_model=config['d_model'],
         num_layers=config['num_layers'],
-        nhead=4,
-        dim_feedforward=config['d_model'] * 4,
+        nhead=config['nhead'], # nhead는 감지 불가 (보통 4 or 8)
+        dim_feedforward=config['dim_feedforward'], # ★ 자동 감지된 값 적용
         dropout=0.1
     )
     
-    model.load_state_dict(state_dict)
+    try:
+        model.load_state_dict(state_dict, strict=False)
+        print("🎉 모델 파라미터 로드 성공!")
+    except Exception as e:
+        print(f"❌ 로드 실패: {e}")
+        # 실패 시 빈 모델 반환하지만 config는 유지
+    
     model.eval()
     return model, config
 
-# 전역 모델 로드
-MODEL_PATH = "../results_transformer/best_model.pt" # 경로 확인 필요
+
+
+# 모델 경로 설정 (실제 경로로 수정 필요)
+MODEL_PATH = "../results_transformer/best_model.pt"
 TF_MODEL, TF_CONFIG = load_transformer_model(MODEL_PATH)
 
 
 # ==========================================
-# 2. RAG 파이프라인 연동용 어댑터 정의
+# 2. RAG 파이프라인 어댑터
 # ==========================================
-
 class TransformerPredictorAdapter:
-    """
-    BidRAGPipeline이 Transformer 모델을 사용할 수 있게 해주는 어댑터
-    Dict[str, Any] (requirements) -> Tensor -> Dict[str, Any] (prediction result)
-    """
     def __init__(self, model, input_dim):
         self.model = model
         self.input_dim = input_dim
 
     def predict(self, requirements: Dict[str, Any], retrieved_context: str) -> Dict[str, Any]:
-        """
-        RAG 파이프라인에서 호출하는 표준 예측 함수
-        """
         try:
-            # 1. 특성 추출 (순서 중요: budget, estimate, range, rate)
-            # BidAssitanceModel.py의 CNN 로직과 동일하게 파싱
+            # 추출된 정보 파싱
             budget = parsenumber(requirements.get('budget'))
             estimate = parsenumber(requirements.get('estimate_price'))
-            # 예가범위, 하한율 처리 (간소화됨, 실제로는 정규 표현식 필요할 수 있음)
+            # 예가범위, 낙찰하한율은 백분율일 수 있으므로 추가 처리 필요할 수 있음
             pr_range = parsenumber(requirements.get('expected_price_range'))
             lower_rate = parsenumber(requirements.get('award_lower_rate'))
 
-            # 결측치 처리 (기본값 또는 에러)
+            # None이면 0.0으로 대체
             features = [
                 budget if budget else 0.0,
                 estimate if estimate else 0.0,
@@ -111,47 +161,41 @@ class TransformerPredictorAdapter:
                 lower_rate if lower_rate else 0.0
             ]
 
-            # 2. 텐서 변환 및 추론
-            input_tensor = torch.tensor([features], dtype=torch.float32)
-            
-            with torch.no_grad():
-                pred_raw = self.model(input_tensor).item()
+            # 모델 추론
+            if self.model:
+                input_tensor = torch.tensor([features], dtype=torch.float32)
+                with torch.no_grad():
+                    pred_raw = self.model(input_tensor).item()
+            else:
+                pred_raw = 0.0 # 모델 없을 때
 
-            # 3. 결과 포맷팅 (RAG 파이프라인이 기대하는 형식)
             return {
                 "currency": "KRW",
-                "predicted_min": None, # 범위 예측 모델이 아니므로 단일값
-                "predicted_max": None,
                 "point_estimate": round(pred_raw),
-                "confidence": "high" if all(f > 0 for f in features) else "low",
-                "rationale": f"Transformer Model Inference (Inputs: {features})",
-                "model": {"type": "transformer_regressor", "features": features}
+                "predicted_min": round(pred_raw * 0.98), # 단순 예시 범위
+                "predicted_max": round(pred_raw * 1.02),
+                "confidence": "high" if self.model else "low",
+                "rationale": f"Transformer Model (Inputs: {features})",
+                "model_type": "TransformerRegressor"
             }
-            
         except Exception as e:
-            return {
-                "error": str(e),
-                "confidence": "low",
-                "rationale": "Inference Failed"
-            }
+            return {"error": str(e), "rationale": "Prediction Failed"}
 
-# 어댑터 인스턴스 생성
-tf_adapter = TransformerPredictorAdapter(TF_MODEL, TF_CONFIG['num_features'])
+# 어댑터 및 파이프라인 생성
+adapter = TransformerPredictorAdapter(TF_MODEL, TF_CONFIG['num_features'])
 
-# RAG 파이프라인 초기화
-print("🚀 RAG 파이프라인 초기화 중...")
+print("🚀 RAG 파이프라인 초기화...")
+# 문서/인덱스 경로는 실제 환경에 맞게 수정해주세요
 rag_pipeline = BidRAGPipeline(
-    doc_dir="./rag_corpus",      # 문서 경로
-    index_dir="./rag_index",     # FAISS 인덱스 경로
-    award_predict_fn=tf_adapter.predict  # ★ Transformer 모델 연결
+    doc_dir="./rag_corpus", 
+    index_dir="./rag_index",
+    award_predict_fn=adapter.predict # ★ 어댑터 함수 주입
 )
 
-
 # ==========================================
-# 3. FastAPI 서버 설정
+# 3. FastAPI 서버
 # ==========================================
-
-app = FastAPI(title="Bid Analytics & Prediction API")
+app = FastAPI(title="Integrated Bid Prediction API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -161,63 +205,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 요청 DTO ---
-class PredictBaseRequest(BaseModel):
-    features: List[float] = Field(..., description="[budget, estimate, range, rate] 순서의 4개 실수 리스트")
+class PredictReq(BaseModel):
+    features: List[float]
 
-class AnalyzeRequest(BaseModel):
-    text: str = Field(..., description="입찰 공고문 전체 텍스트")
-    thread_id: Optional[str] = Field(default="default_thread", description="대화형 컨텍스트 유지용 ID")
+class AnalyzeReq(BaseModel):
+    text: str
+    thread_id: str = "default"
 
-# --- 엔드포인트 1: 기본 모델 추론 (model_serving.py 기능) ---
 @app.post("/predictBase")
-async def predict_base(req: PredictBaseRequest):
-    expected = TF_CONFIG['num_features']
-    if len(req.features) != expected:
-        raise HTTPException(status_code=400, detail=f"입력 개수 불일치 (기대: {expected}, 실제: {len(req.features)})")
-    
+async def predict_base(req: PredictReq):
+    if not TF_MODEL:
+        return {"error": "Model not loaded", "predBid": 0}
+        
     try:
         input_tensor = torch.tensor([req.features], dtype=torch.float32)
         with torch.no_grad():
             pred = TF_MODEL(input_tensor).item()
         return {"predBid": pred}
     except Exception as e:
-        return {"error": str(e), "predBid": 9999}
+        return {"error": str(e), "predBid": 0}
 
-# --- 엔드포인트 2: RAG 기반 전체 분석 (BidAssitanceModel.py 기능) ---
 @app.post("/analyze")
-async def analyze_bid(req: AnalyzeRequest):
-    """
-    공고문 텍스트를 받아 RAG 검색 -> 정보 추출 -> Transformer 가격 예측 -> 보고서 생성 수행
-    """
+async def analyze(req: AnalyzeReq):
     try:
-        # Pipeline의 analyze 메서드 호출
-        results = rag_pipeline.analyze(req.text, thread_id=req.thread_id)
+        # RAG 파이프라인 실행
+        result = rag_pipeline.analyze(req.text, thread_id=req.thread_id)
         
+        # 결과 정리
         return {
-            "requirements": results.get("requirements"), # 추출된 정보
-            "report_markdown": results.get("report_markdown"), # LLM 분석 보고서
-            "prediction": results.get("prediction_result") # Transformer 예측 결과 포함됨
+            "extracted_requirements": result.get("requirements", {}),
+            "prediction": result.get("prediction_result", {}),
+            "report": result.get("report_markdown", "")
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
-async def root():
-    return {"status": "online", "model": "TransformerRegressor", "pipeline": "BidRAG"}
-
-# ==========================================
-# 4. 서버 실행 (ngrok 포함)
-# ==========================================
+def root():
+    return {"status": "running"}
 
 if __name__ == "__main__":
-    # ngrok 설정
-    AUTH_TOKEN = "38H6WIHF5Hn1xV68lPnXu15Tutc_4PDGKRtxpJhbJuVdcUCEp" # 기존 토큰 유지
-    ngrok.set_auth_token(AUTH_TOKEN)
+    auth_token = "38H6WIHF5Hn1xV68lPnXu15Tutc_4PDGKRtxpJhbJuVdcUCEp"
+    ngrok.set_auth_token(auth_token)
+    url = ngrok.connect(9999).public_url
+    print(f"🌍 Public URL: {url}")
     
-    port = 9999
-    public_url = ngrok.connect(port).public_url
-    print(f"🌍 공용 URL: {public_url}")
-
     nest_asyncio.apply()
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=9999)

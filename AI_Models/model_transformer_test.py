@@ -1,140 +1,111 @@
-# -*- coding: utf-8 -*-
-"""
-AI_Models/model_transformer_test.py
-
-Train + evaluate + small inference demo (relative paths).
-
-Examples:
-  py model_transformer_test.py --quick
-  py model_transformer_test.py --epochs 200 --batch 256 --lr 3e-4
-"""
-
-from __future__ import annotations
-
-import argparse
-from pathlib import Path
-
+import numpy as np
 import pandas as pd
+import torch
+import os
+import matplotlib.pyplot as plt
 
-from model_transformer import (
-    DEFAULT_DATA_PATH,
-    DEFAULT_OUT_DIR,
-    load_model_artifacts,
-    predict_dataframe,
-    read_csv_safely,
-    run_training_transformer,
-)
+# 같은 폴더에 model_transformer.py가 있어야 함
+from model_transformer import run_training_transformer
 
+def main():
+    # 데이터 경로 설정 (상대 경로 주의)
+    csv_path = "../dataset/dataset_feature_selected.csv"
+    
+    if not os.path.exists(csv_path):
+        print(f"❌ 데이터 파일을 찾을 수 없습니다: {csv_path}")
+        # 혹시 현재 폴더 기준일 수도 있으니 체크
+        if os.path.exists("./dataset_feature_selected.csv"):
+            csv_path = "./dataset_feature_selected.csv"
+            print(f"📂 현재 폴더에서 파일 발견: {csv_path}")
+        else:
+            return
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
-    p.add_argument("--data", type=str, default=None)
-    p.add_argument("--out", type=str, default=None)
-    p.add_argument("--epochs", type=int, default=200)
-    p.add_argument("--batch", type=int, default=256)
-    p.add_argument("--lr", type=float, default=3e-4)
-    p.add_argument("--patience", type=int, default=20)
-    p.add_argument("--quick", action="store_true")
-    p.add_argument("--no_ema", action="store_true")
-    p.add_argument("--no_onecycle", action="store_true")
-    return p.parse_args()
+    print(f"📂 Loading data from: {csv_path}")
+    df = pd.read_csv(csv_path)
 
-
-def main() -> None:
-    args = parse_args()
-
-    data_path = Path(args.data) if args.data else DEFAULT_DATA_PATH
-    out_dir = Path(args.out) if args.out else DEFAULT_OUT_DIR
-
-    df = read_csv_safely(data_path)
-
-    feature_cols = ["기초금액", "추정가격", "예가범위", "낙찰하한율"]
+    # 1. 타겟 컬럼 정의
     target_col = "낙찰가"
 
-    required = feature_cols + [target_col]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise KeyError(f"CSV에 필요한 컬럼이 없습니다: {missing}\n현재 컬럼: {df.columns.tolist()}")
+    # 2. 필수 컬럼 확인 (타겟이 있는지)
+    if target_col not in df.columns:
+        raise KeyError(f"CSV에 타겟 컬럼 '{target_col}'이(가) 없습니다.")
 
-    if args.quick:
-        # 파이프라인이 정상인지 빠르게 확인용(속도 우선)
-        epochs = 30
-        batch = max(128, args.batch)
-        lr = args.lr
-        patience = 8
-        d_model = 64
-        nhead = 4
-        num_layers = 2
-        dim_ff = 256
-        dropout = 0.10
-        noise_std = 0.005
-    else:
-        epochs = args.epochs
-        batch = args.batch
-        lr = args.lr
-        patience = args.patience
-        d_model = 128
-        nhead = 4
-        num_layers = 3
-        dim_ff = 512
-        dropout = 0.15
-        noise_std = 0.01
+    # 3. Feature 컬럼 자동 정의 (전체 컬럼에서 타겟만 제외)
+    feature_cols = [c for c in df.columns if c != target_col]
+    print(f"📊 감지된 입력 피처 ({len(feature_cols)}개): {feature_cols}")
 
+    # 4. 학습 실행
+    # (주의: run_training_transformer 함수의 정의에 없는 인자는 넣으면 에러 남)
+    print("🚀 학습 시작...")
     res = run_training_transformer(
         df=df,
         feature_cols=feature_cols,
         target_col=target_col,
-        target_log=True,
-        output_dir=str(out_dir),
-        epochs=epochs,
-        batch_size=batch,
-        lr=lr,
-        patience=patience,
-        split_strategy="stratified",
-        loss_name="huber",
-        onecycle=not args.no_onecycle,
-        ema_decay=0.0 if args.no_ema else 0.999,
-        feature_noise_std=noise_std,
-        d_model=d_model,
-        nhead=nhead,
-        num_layers=num_layers,
-        dim_feedforward=dim_ff,
-        dropout=dropout,
-        verbose=True,   # 진행 로그 필수
+        target_log=True,         # 타겟 로그 변환 사용
+        epochs=50,               # 테스트용으로 Epoch 줄임 (필요시 200으로 변경)
+        patience=10,
+        batch_size=64,
+        lr=1e-4,
+        weight_decay=1e-4,
+        d_model=512,             
+        nhead=4,
+        num_layers=2,
+        dim_feedforward=2048,     
+        dropout=0.1,
+        # 아래 옵션들은 함수 정의에 따라 에러가 날 수 있어 제거하거나 확인 필요
+        # feature_noise_std=0.001, 
+        verbose=True
     )
 
-    print("\n[Best VAL metrics]")
-    for k, v in res.best_val.items():
-        print(f"{k:>6}: {v:.6f}")
+    print("\n✅ Best VAL Loss:", res.best_val)
+    print("✅ TEST Loss:", res.test)
 
-    print("\n[TEST metrics]")
-    for k, v in res.test.items():
-        print(f"{k:>6}: {v:.6f}")
+    # 5. 샘플 예측 테스트
+    # 데이터가 적을 경우를 대비해 min 처리
+    sample_size = min(5, len(df))
+    sample = df.sample(sample_size, random_state=42).copy()
 
-    print(f"\nArtifacts saved to: {res.output_dir}")
+    # 데이터 전처리 (Scaler 사용)
+    X = sample[feature_cols].to_numpy(dtype=np.float32)
+    X_s = res.x_scaler.transform(X)
 
-    # Reload artifacts and run a small inference demo
-    model, x_scaler, y_scaler, target_log, feat_cols = load_model_artifacts(Path(res.output_dir))
+    # 텐서 변환
+    x_t = torch.from_numpy(X_s)
+    
+    device = next(res.model.parameters()).device
+    res.model.eval()
+    
+    with torch.no_grad():
+        try:
+            # 기본 시도: (Batch, Feature) 2D
+            pred_s = res.model(x_t.to(device)).cpu().numpy()
+        except RuntimeError:
+            # 차원 에러 시: (Batch, Feature, 1) 3D 시도 (Sequence Length=Feature Dim인 경우)
+            # 혹은 (Batch, 1, Feature)일 수도 있음
+            # 에러 메시지: "expected 3D input" 등이 뜨면 unsqueeze 필요
+            x_t_reshaped = x_t.unsqueeze(-1) # (Batch, Feature, 1)
+            pred_s = res.model(x_t_reshaped.to(device)).cpu().numpy()
 
-    sample = df.sample(5, random_state=0).copy()
-    pred = predict_dataframe(
-        model=model,
-        df=sample,
-        feature_cols=feat_cols,
-        x_scaler=x_scaler,
-        y_scaler=y_scaler,
-        target_log=target_log,
-        amp=True,  # CUDA면 자동 사용, CPU면 내부에서 사실상 off
-    )
+    # 역변환 (Log -> 원래 가격)
+    # res 객체에 target_log 속성이 없으면 True라고 가정 (위에서 넣었으므로)
+    use_log = getattr(res, 'target_log', True)
+    
+    pred_log = res.y_scaler.inverse_transform(pred_s)
+    pred_amt = np.expm1(pred_log) if use_log else pred_log
 
+    # 결과 비교 출력
     out = sample[[target_col]].copy()
-    out["예측낙찰가"] = pred
+    out["예측낙찰가"] = pred_amt
     out["오차(예측-실제)"] = out["예측낙찰가"] - out[target_col]
+    
+    # 0으로 나누기 방지
+    out["오차율(%)"] = 0.0
+    mask = out[target_col] != 0
+    out.loc[mask, "오차율(%)"] = (out.loc[mask, "오차(예측-실제)"] / out.loc[mask, target_col] * 100).abs()
 
-    print("\n[Sample predictions]")
-    with pd.option_context("display.max_columns", None, "display.width", 200):
-        print(out.round(2).to_string(index=False))
-
+    pd.options.display.float_format = '{:,.0f}'.format
+    print("\n[Sample predictions (Unit: KRW)]")
+    print(out.to_string())
 
 if __name__ == "__main__":
     main()

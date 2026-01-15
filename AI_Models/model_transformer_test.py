@@ -42,14 +42,14 @@ def main():
         feature_cols=feature_cols,
         target_col=target_col,
         target_log=True,         # 타겟 로그 변환 사용
-        epochs=50,               # 테스트용으로 Epoch 줄임 (필요시 200으로 변경)
+        epochs=200,               
         patience=10,
         batch_size=64,
         lr=1e-4,
         weight_decay=1e-4,
         d_model=512,             
         nhead=4,
-        num_layers=2,
+        num_layers=3,
         dim_feedforward=2048,     
         dropout=0.1,
         # 아래 옵션들은 함수 정의에 따라 에러가 날 수 있어 제거하거나 확인 필요
@@ -61,7 +61,6 @@ def main():
     print("✅ TEST Loss:", res.test)
 
     # 5. 샘플 예측 테스트
-    # 데이터가 적을 경우를 대비해 min 처리
     sample_size = min(5, len(df))
     sample = df.sample(sample_size, random_state=42).copy()
 
@@ -69,25 +68,21 @@ def main():
     X = sample[feature_cols].to_numpy(dtype=np.float32)
     X_s = res.x_scaler.transform(X)
 
-    # 텐서 변환
+    # 텐서 변환 및 3D 변환 (모델이 기대하는 형태로)
+    # model_transformer.py의 forward 메서드가 (B, F, 1) 형태를 원함
     x_t = torch.from_numpy(X_s)
+    
+    # 2D (Batch, Feature) -> 3D (Batch, Feature, 1) 변환
+    x_t = x_t.unsqueeze(-1)  # 마지막 차원에 1 추가
     
     device = next(res.model.parameters()).device
     res.model.eval()
     
     with torch.no_grad():
-        try:
-            # 기본 시도: (Batch, Feature) 2D
-            pred_s = res.model(x_t.to(device)).cpu().numpy()
-        except RuntimeError:
-            # 차원 에러 시: (Batch, Feature, 1) 3D 시도 (Sequence Length=Feature Dim인 경우)
-            # 혹은 (Batch, 1, Feature)일 수도 있음
-            # 에러 메시지: "expected 3D input" 등이 뜨면 unsqueeze 필요
-            x_t_reshaped = x_t.unsqueeze(-1) # (Batch, Feature, 1)
-            pred_s = res.model(x_t_reshaped.to(device)).cpu().numpy()
+        # 이제 (Batch, Feature, 1) 형태로 전달
+        pred_s = res.model(x_t.to(device)).cpu().numpy()
 
     # 역변환 (Log -> 원래 가격)
-    # res 객체에 target_log 속성이 없으면 True라고 가정 (위에서 넣었으므로)
     use_log = getattr(res, 'target_log', True)
     
     pred_log = res.y_scaler.inverse_transform(pred_s)
@@ -103,9 +98,10 @@ def main():
     mask = out[target_col] != 0
     out.loc[mask, "오차율(%)"] = (out.loc[mask, "오차(예측-실제)"] / out.loc[mask, target_col] * 100).abs()
 
-    pd.options.display.float_format = '{:,.0f}'.format
+    pd.options.display.float_format = '{:,.2f}'.format
     print("\n[Sample predictions (Unit: KRW)]")
     print(out.to_string())
+
 
 if __name__ == "__main__":
     main()

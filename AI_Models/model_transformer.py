@@ -9,6 +9,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
+import os
+import matplotlib.pyplot as plt
+
+
 
 # Reproducibility
 
@@ -100,7 +104,7 @@ class TransformerRegressor(nn.Module):
     def __init__(
         self,
         num_features: int = 4,
-        d_model: int = 64,
+        d_model: int = 512,
         nhead: int = 4,
         num_layers: int = 2,
         dim_feedforward: int = 128,
@@ -183,14 +187,25 @@ class TransformerRegressor(nn.Module):
 
 # Metrics
 
+# Metrics
 def regression_metrics(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1e-8) -> Dict[str, float]:
     y_true = np.asarray(y_true, dtype=np.float64)
     y_pred = np.asarray(y_pred, dtype=np.float64)
+
     mse = np.mean((y_true - y_pred) ** 2)
     rmse = float(np.sqrt(mse))
     mae = float(np.mean(np.abs(y_true - y_pred)))
     mape = float(np.mean(np.abs((y_true - y_pred) / (np.abs(y_true) + eps))) * 100.0)
-    return {"MSE": float(mse), "RMSE": rmse, "MAE": mae, "MAPE": mape}
+    
+    # [추가] R2 Score 계산
+    ss_res = np.sum((y_true - y_pred) ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    
+    # 분모가 0이 되는 것을 방지하기 위해 eps 더함
+    r2 = 1 - (ss_res / (ss_tot + eps))
+
+    return {"MSE": float(mse), "RMSE": rmse, "MAE": mae, "MAPE": mape, "R2": float(r2)}
+
 
 
 @torch.no_grad()
@@ -246,7 +261,7 @@ class TrainResult:
     y_scaler: TargetScaler
     best_val: Dict[str, float]
     test: Dict[str, float]
-
+    history: Dict[str, List[float]]  # [추가] 학습 기록 저장
 
 def run_training_transformer(
     df: pd.DataFrame,
@@ -267,7 +282,12 @@ def run_training_transformer(
     num_layers: int = 2,
     dim_feedforward: int = 128,
     dropout: float = 0.1,
+    output_dir: str = "./results_transformer"  # [추가] 결과 저장 경로
 ) -> TrainResult:
+    
+    # 결과 저장 디렉토리 생성
+    os.makedirs(output_dir, exist_ok=True)
+    
     seed_everything(seed, deterministic=deterministic)
 
     # 1) load + numeric
@@ -336,16 +356,26 @@ def run_training_transformer(
     best_val_rmse = float("inf")
     best_val_metrics: Dict[str, float] = {}
     bad = 0
+    history = {"train_loss": [], "val_loss": []} # [추가] Loss 기록
+
+    print(f"Start Transformer Training on {device}...")
 
     for epoch in range(1, epochs + 1):
         tr_loss = train_one_epoch(model, train_loader, optim, device)
 
+        # Validation Prediction (Scaled 상태)
         yv_true_s, yv_pred_s = predict(model, val_loader, device)
-        # inverse y scaling -> y_p space
+        
+        # [추가] Loss Plot을 위해 Scaled 상태에서의 Val MSE 계산 (Train Loss와 비교 가능하도록)
+        val_loss_scaled = np.mean((yv_true_s - yv_pred_s) ** 2)
+        
+        history["train_loss"].append(tr_loss)
+        history["val_loss"].append(val_loss_scaled)
+
+        # Metrics 계산을 위한 역변환
         yv_true_p = y_scaler.inverse_transform(yv_true_s)
         yv_pred_p = y_scaler.inverse_transform(yv_pred_s)
 
-        # convert to amount scale for metrics
         if target_log:
             yv_true = np.expm1(yv_true_p)
             yv_pred = np.expm1(yv_pred_p)
@@ -355,8 +385,8 @@ def run_training_transformer(
         val_m = regression_metrics(yv_true, yv_pred)
 
         print(
-            f"Epoch {epoch:03d} | train_loss={tr_loss:.6f} | "
-            f"val_RMSE={val_m['RMSE']:.4f} | val_MAE={val_m['MAE']:.4f} | val_MAPE={val_m['MAPE']:.2f}"
+            f"Epoch {epoch:03d} | train_loss={tr_loss:.6f} | val_loss(scaled)={val_loss_scaled:.6f} | "
+            f"val_RMSE={val_m['RMSE']:.4f}"
         )
 
         if val_m["RMSE"] < best_val_rmse:
@@ -370,10 +400,28 @@ def run_training_transformer(
                 print(f"Early stopping (patience={patience}).")
                 break
 
+    # 8) [추가] 모델 저장 및 시각화
+    
+    # Best Model 저장
     if best_state is not None:
         model.load_state_dict(best_state)
+        save_path = os.path.join(output_dir, "best_transformer.pt")
+        torch.save(best_state, save_path)
+        print(f"Saved best model to {save_path}")
 
-    # 8) Final test
+    # Loss Graph 저장
+    plt.figure(figsize=(10, 6))
+    plt.plot(history['train_loss'], label='Train Loss (Scaled MSE)')
+    plt.plot(history['val_loss'], label='Val Loss (Scaled MSE)')
+    plt.title('Transformer Training & Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(output_dir, 'loss_history.png'))
+    plt.close()
+
+    # 9) Final Test & Scatter Plot
     yt_true_s, yt_pred_s = predict(model, test_loader, device)
     yt_true_p = y_scaler.inverse_transform(yt_true_s)
     yt_pred_p = y_scaler.inverse_transform(yt_pred_s)
@@ -385,7 +433,25 @@ def run_training_transformer(
         yt_true, yt_pred = yt_true_p, yt_pred_p
 
     test_m = regression_metrics(yt_true, yt_pred)
-    print(f"[FINAL TEST] RMSE={test_m['RMSE']:.4f} | MAE={test_m['MAE']:.4f} | MAPE={test_m['MAPE']:.2f}")
+    print(f"[FINAL TEST] RMSE={test_m['RMSE']:.4f} | MAE={test_m['MAE']:.4f} | MAPE={test_m['MAPE']:.2f} | R2={test_m['R2']:.4f}")
+
+
+    # Scatter Plot 저장 (Prediction vs Actual)
+    plt.figure(figsize=(8, 8))
+    plt.scatter(yt_true, yt_pred, alpha=0.5, s=10)
+    
+    # Perfect Fit Line
+    min_val = min(yt_true.min(), yt_pred.min())
+    max_val = max(yt_true.max(), yt_pred.max())
+    plt.plot([min_val, max_val], [min_val, max_val], 'r--', label='Perfect Fit')
+    
+    plt.title(f'Transformer: Actual vs Predicted\nRMSE: {test_m["RMSE"]:.2f}, MAE: {test_m["MAE"]:.2f}, R2: {test_m["R2"]:.4f}')
+    plt.xlabel('Actual Value')
+    plt.ylabel('Predicted Value')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(output_dir, 'prediction_scatter.png'))
+    plt.close()
 
     return TrainResult(
         model=model,
@@ -393,4 +459,5 @@ def run_training_transformer(
         y_scaler=y_scaler,
         best_val=best_val_metrics,
         test=test_m,
+        history=history
     )

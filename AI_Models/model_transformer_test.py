@@ -1,12 +1,15 @@
 import numpy as np
 import pandas as pd
 import torch
+import os
+import matplotlib.pyplot as plt
+
 
 from model_transformer import run_training_transformer
 
 
 def main():
-    csv_path = "test_bid_4features.csv"
+    csv_path = "../dataset/preprocessed_dataset.csv"
     df = pd.read_csv(csv_path)
 
     required = ["기초금액", "추정가격", "예가범위", "낙찰하한율", "낙찰가"]
@@ -21,13 +24,13 @@ def main():
         target_log=True,
         epochs=200,
         patience=20,
-        batch_size=256,
-        lr=3e-4,
+        batch_size=64,
+        lr=1e-4,
         weight_decay=1e-4,
-        d_model=64,
+        d_model=512,
         nhead=4,
         num_layers=2,
-        dim_feedforward=128,
+        dim_feedforward=2048,
         dropout=0.1,
     )
 

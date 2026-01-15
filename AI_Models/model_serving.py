@@ -19,4 +19,4 @@ app.add_middleware(
 )
 
 pretrainedModelParams = torch.load("../results_transformer/best_model.pt")
-pretrainedModel = 
+

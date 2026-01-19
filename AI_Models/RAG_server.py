@@ -132,7 +132,7 @@ def load_transformer_model(model_path: str):
 
 
 # 모델 경로 설정 (실제 경로로 수정 필요)
-MODEL_PATH = "../results_transformer/best_model.pt"
+MODEL_PATH = "../results_transformer_4feat/transformer_4feat.pt"
 TF_MODEL, TF_CONFIG = load_transformer_model(MODEL_PATH)
 
 

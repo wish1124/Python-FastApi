@@ -30,7 +30,7 @@ def main():
     feature_cols = ["기초금액", "추정가격", "예가범위", "낙찰하한율"]
 
     # 2. 필수 컬럼 확인 (타겟 + 피처가 모두 있는지)
-    required_cols = feature_cols + [target_col]
+    required_cols = feature_cols + [target_col] 
     missing = [c for c in required_cols if c not in df.columns]
     
     if missing:

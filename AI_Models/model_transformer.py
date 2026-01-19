@@ -210,7 +210,7 @@ class TransformerRegressor(nn.Module):
         feat_ids = torch.arange(F, device=x.device).unsqueeze(0).expand(B, F)
         v = v + self.feature_emb(feat_ids)
 
-        pos_ids = torch.arange(1, F + 1, device=x.device).unsqueeze(0).expand(B, F)
+        pos_ids = torch.arange(1, F + 1, device=x.device).unsqueeze(0).expand(B, F) 
         v = v + self.pos_emb(pos_ids)
 
         cls = self.cls_token.expand(B, 1, self.d_model)

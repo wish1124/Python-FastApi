@@ -120,7 +120,7 @@ prompt = ChatPromptTemplate.from_template("""
 """)
 
 llm = ChatOpenAI(
-    model="gpt-4o-mini",
+    model="gpt-5-nano",
     temperature=0
 )
 

@@ -7,144 +7,91 @@ Original file is located at
     https://colab.research.google.com/drive/1AFMgWD0PfajL3uwexva_UJrCvbC0JOsF
 """
 
-# 로컬(VS Code) 실행 환경용 설치 방법 안내(터미널에서 실행)
+# usage_tool.py : 실사용 toolnode
 # python -m pip install langchain-openai langchain faiss-cpu langchain-community langchain-text-splitters unstructured[xlsx]
 # pip install langchainhub faiss-cpu langchain-openai langchain langgraph typing typing_extensions langchain_core langchain-community
 # pip install -U langchain-openai langchain-community langchain-text-splitters
 # pip install -q pillow unstructured msoffcrypto-tool
 
 # -*- coding: utf-8 -*-
-
-import os
-import glob
-import warnings
-from pathlib import Path
-from typing import Sequence
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-# =========================
-# 1. 프로젝트 경로 설정
-# =========================
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-FAISS_DIR = BASE_DIR / "faiss_index"
-
-# =========================
-# 2. API KEY 로드
-# =========================
-def load_api_keys(filepath: Path):
-    if not filepath.exists():
-        raise FileNotFoundError(f"API 키 파일이 없습니다: {filepath}")
-    with filepath.open("r", encoding="utf-8") as f:
-        for line in f:
-            if "=" in line:
-                k, v = line.strip().split("=", 1)
-                os.environ[k.strip()] = v.strip()
-
-load_api_keys(BASE_DIR / "usage_api.txt")
-
-# =========================
-# 3. LangChain imports
-# =========================
+from langchain.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_community.document_loaders import UnstructuredExcelLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.documents import Document
+from typing import List, Dict
+import os
+
+from vector_db_embedding import *
+# =========================
+# 기본 설정
+# =========================
+# 사용할 API 키 불러오기
+def load_api_keys(filepath="api_key.txt"): 
+    with open(filepath, "r") as f:
+        for line in f:
+            line = line.strip()
+            if line and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ[key.strip()] = value.strip()
+        
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_api_keys(os.path.join(BASE_DIR, "usage_api.txt"))   # API 키 로드 및 환경변수 설정
+
+# EMBEDDING_MODEL = "text-embedding-3-small"     # Embedding 모델(text-embedding-3-small) 설정
+LLM_MODEL = "gpt-5-nano"                       # LLM 모델(gpt-5-nano) 설정
+
+# embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)  # Embedding 모델 초기화
+llm = ChatOpenAI(model=LLM_MODEL, temperature=0.2)    # LLM 모델 초기화
 
 # =========================
-# 4. 데이터 로딩
+# Tool: usage_tool (사용자 질문 처리 -> 답변값(response) 반환)
 # =========================
-excel_path = DATA_DIR / "api정의서.xlsx"
+@tool
+def usage_tool(query: str, img: str, api: str):
+    """
+    query : 사용자 질문
+    img   : 웹페이지 스크린샷 image FAISS DB 경로
+    api   : API 정의서 엑셀 FAISS DB 경로
+    """
 
-if not excel_path.exists():
-    raise FileNotFoundError("api정의서.xlsx 파일이 없습니다.")
+    # 1️⃣ FAISS 로드 (완전 분리)
+    image_faiss = load_image_faiss(img)
+    api_faiss = load_api_faiss(api)
+    # 2️⃣ 벡터 유사도 검색
+    image_docs = search_image_context(image_faiss, query)
+    api_docs = search_api_context(api_faiss, query)
+    # 3️⃣ 컨텍스트 분리 정리
+    contexts = build_context(image_docs, api_docs)
+    image_context = contexts["image"]
+    api_context = contexts["api"]
 
-excel_loader = UnstructuredExcelLoader(str(excel_path))
-excel_docs = excel_loader.load()
+    # 4️⃣ LLM 프롬프트
+    prompt = f"""
+        Role 설정 : 
+        너는 소형·중형 건설사를 대상으로 운영하는 "나라장터 기반 조달·입찰 인텔리전스 플랫폼"사이트의 
+        편리한 이용을 도와주는 챗봇이다. 
+        아래의 3가지 문서 "웹페이지 스크린샷 기반 정보", "API 정의서 엑셀 기반 정보"와
+        "요구사항"의 내용을 참고하여 사용자의 질문에 대한 답변을 생성하라.
 
-# 이미지 파일은 문서 설명 참고용 → 텍스트 RAG에는 제외
-print(f"엑셀 문서 수: {len(excel_docs)}")
+        요구사항:
+        - API 정의서의 내용을 가져와서 설명하지 말 것, API 정의서는 웹사이트의 기능이 어떻게 동작하는지에 대한 참고 자료로 사용하라.
+        - 소형·중형 건설사에서 종사하는 사람이 이해하기 쉽게 설명한다.
+        - 300 ~ 700자 이내의 범위로 답변을 생성하라.
+        - "상황별 팁", "시나리오", "팁"의 정보는 제공하지 않는다.
+        - 답변 시작문구의 내용 소개, 끝문구의 추천 내용은 간단하고 짧게 작성하라.
+        - 답변에 영문자를 사용하지 말 것.
+        - 모든 답변은 공손한 존대말을 사용하라.
+        
+        [웹페이지 스크린샷 기반 정보]
+        {image_context}
 
-# =========================
-# 5. 문서 분할
-# =========================
-splitter = RecursiveCharacterTextSplitter(
-    chunk_size=500,
-    chunk_overlap=50
-)
+        [API 정의서 엑셀 기반 정보]
+        {api_context}
 
-split_docs = splitter.split_documents(excel_docs)
+        [질문]
+        {query}
+    """
 
-# =========================
-# 6. 벡터 DB 생성
-# =========================
-embeddings = OpenAIEmbeddings(
-    model="text-embedding-3-small"
-)
-
-vectorstore = FAISS.from_documents(split_docs, embeddings)
-vectorstore.save_local(str(FAISS_DIR))
-
-vectorstore = FAISS.load_local(
-    str(FAISS_DIR),
-    embeddings,
-    allow_dangerous_deserialization=True
-)
-
-retriever = vectorstore.as_retriever(
-    search_type="similarity",
-    search_kwargs={"k": 3}
-)
-
-# =========================
-# 7. 프롬프트 & LLM
-# =========================
-prompt = ChatPromptTemplate.from_template("""
-당신은 대한민국의 공무원이자
-"나라장터 기반 조달·입찰 인텔리전스 플랫폼" 사이트 운영자이다.
-
-문서를 참고하여 웹사이트의 기능을 설명하라.
-
-- API 정의서 자체를 설명하지 말 것
-- 소형·중형 건설사가 이해할 수 있게 설명
-- 사용 방법 중심으로 서술
-
-[문서]
-{context}
-
-[질문]
-{question}
-""")
-
-llm = ChatOpenAI(
-    model="gpt-5-nano",
-    temperature=0
-)
-
-qa_chain = (
-    {
-        "context": retriever,
-        "question": RunnablePassthrough()
-    }
-    | prompt
-    | llm
-)
-
-# =========================
-# 8. 실행 테스트
-# =========================
-# content 만 보여주기
-# response = qa_chain.invoke("로그인은 어디에서 할 수 있나요?")
-# print(response.content)
-response2 = qa_chain.invoke("공고찾기 페이지는 어떻게 사용하는 것인지 설명해줘.")
-print(response2.content)
-
-# 전체 출력 내용
-# response3 = qa_chain.invoke("로그인은 어디에서 할 수 있나요?")
-# print(response3)
-response4 = qa_chain.invoke("공고찾기 페이지는 어떻게 사용하는 것인지 설명해줘.")
-print(response4)
-
+    # 5️⃣ 답변 생성
+    response = llm.invoke(prompt)
+    return response.content # 답변 내용(response.content) 반환

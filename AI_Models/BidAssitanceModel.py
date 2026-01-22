@@ -1103,7 +1103,7 @@ class BidRAGPipeline:
                 "실무자가 바로 사용할 수 있는 '제안/투찰 분석 리포트'를 한국어 마크다운으로 작성하라.\n\n"
                 "필수 섹션(순서 유지):\n"
                 "# 1. 공고 요약\n"
-                "# 2. 참가자격/실적/제출서류 체크리스트\n"
+                "# 2. 참가자격/실적/제출서류 체크리스트, 참가자격은 지역요건, 실적요건, 자격 요건으로 나눠서 설명해줘\n"
                 "# 3. 낙찰가 예측(범위/포인트/근거/리스크)\n"
                 "# 4. 권고 액션(다음 72시간 To-Do)\n\n"
                 "제약: 근거가 불충분하면 '가정'으로 명시하고 추가 수집 항목을 제시하라."
@@ -1144,7 +1144,7 @@ if __name__ == "__main__":
     import uuid
 
     try:
-        from md2pdf.md2pdf import md2pdf
+        from md2pdf.core import md2pdf
     except ImportError:
         print("ERROR: md2pdf not installed. Run: pip install md2pdf")
         sys.exit(1)
@@ -1168,6 +1168,8 @@ if __name__ == "__main__":
     parser.add_argument("--award_device", default=None, help="torch device. 예: cpu 또는 cuda")
     parser.add_argument("--award_hidden", type=int, default=64, help="CNN1D hidden size (학습과 동일해야 함)")
     parser.add_argument("--award_dropout", type=float, default=0.1, help="CNN1D dropout (학습과 동일해야 함)")
+    parser.add_argument("--output_dir", default="./reports", help="Result output directory")
+    parser.add_argument("--output_pdf", default=None, help="Output PDF file path")
 
     args = parser.parse_args()
 

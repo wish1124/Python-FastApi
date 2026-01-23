@@ -7,12 +7,14 @@ import os
 import json
 import numpy as np
 import uuid
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from pyngrok import ngrok
 from fpdf import FPDF  # [수정] 오류가 잦은 md2pdf 대신 fpdf2 사용
+from azure.storage.blob import BlobServiceClient, ContentSettings
 
 # --- 모듈 임포트 ---
 try:
@@ -116,6 +118,27 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+# --- Azure Blob Storage 설정 ---
+load_dotenv()
+AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+AZURE_CONTAINER_NAME = "uploads"
+
+if not AZURE_STORAGE_CONNECTION_STRING:
+    raise ValueError("❌환경변수 'AZURE_STORAGE_CONNECTION_STRING'이 설정되지 않았습니다!")
+
+def upload_to_azure(file_path, file_name):
+    try:
+        blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+        blob_client = blob_service_client.get_blob_client(container=AZURE_CONTAINER_NAME, blob=file_name)
+
+        # 파일 업로드
+        with open(file=file_path, mode="rb") as data:
+            blob_client.upload_blob(data, overwrite=True, content_type="application/pdf") # 다운X 브라우저에서 바로 열람
+        return blob_client.url
+    except Exception as e:
+        print(f"Azure 업로드 실패: {e}")
+        return e
+
 def generate_pdf(report_text, output_path):
     """fpdf2 OS/2 에러 완벽 해결 버전 (로컬 폰트 사용)"""
     try:
@@ -171,16 +194,19 @@ async def analyze(req: Dict[str, Any]):
             generate_pdf(report_md, pdf_path)
             full_pdf_path = os.path.abspath(pdf_path)
             print(f"✅ PDF 생성 성공: {full_pdf_path}")
+
+            final_url = upload_to_azure(full_pdf_path, pdf_filename)
+            print(f"Azure 업로드 URL: {final_url}")
         except Exception as e:
             # 실패 시 상세 원인을 JSON 응답에 포함
             print(f"❌ PDF 생성 단계 최종 실패: {e}")
-            full_pdf_path = f"PDF 생성 실패: {str(e)}"
+            final_url = f"PDF 생성 실패: {str(e)}"
 
         return {
             "extracted_requirements": result.get("requirements", {}),
             "prediction": result.get("prediction_result", {}),
             "report": report_md,
-            "pdf_link": full_pdf_path
+            "pdf_link": final_url
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -188,3 +214,5 @@ async def analyze(req: Dict[str, Any]):
 if __name__ == "__main__":
     nest_asyncio.apply()
     uvicorn.run(app, host="0.0.0.0", port=9999)
+
+여기 코드는 됐지 그러면?

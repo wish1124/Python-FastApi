@@ -3,3 +3,4 @@ __pycache__/
 output/
 rag_index/
 .DS_Store
+.env

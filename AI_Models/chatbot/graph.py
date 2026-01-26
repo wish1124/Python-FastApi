@@ -11,6 +11,7 @@ from langgraph.graph import StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import MemorySaver
 from usage_tool import usage_tool
+from search_tool_nltojson import extract_notice_query
 
 # 환경 변수 로드
 load_dotenv()
@@ -24,13 +25,9 @@ class AgentState(TypedDict):
 # =================================================================
 # 2. Tool Definitions
 # =================================================================
-@tool
-def search_tool(query: str):
-    """공고들을 필터링하여 검색하는 tool node입니다."""
-    return f"[Mock] '{query}' 지역별 공고 검색 결과: [서울 공고1, 부산 공고2]"
+# search_tool is imported from search_tool_nltojson.py as extract_notice_query
 
-
-tools = [search_tool, usage_tool]
+tools = [extract_notice_query, usage_tool]
 
 # =================================================================
 # 3. Graph Nodes Setup

@@ -214,5 +214,3 @@ async def analyze(req: Dict[str, Any]):
 if __name__ == "__main__":
     nest_asyncio.apply()
     uvicorn.run(app, host="0.0.0.0", port=9999)
-
-여기 코드는 됐지 그러면?

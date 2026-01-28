@@ -1,10 +1,17 @@
-import json
 from langchain.tools import tool
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-5-nano", temperature=1)
 
 @tool
 def extract_notice_query(user_query: str) -> dict:
     """
     이 도구는 사용자의 질문을 공고 조회를 위한 필터 조건 JSON 객체로 변환한다.
+    공고 조회가 아닌 질문에는 사용하지 않는다.
+    """
+    prompt="""
+    사용자의 질문을 공고 조회를 위한 필터 조건 json 객체로 변환한다.
+    반드시 아래 규칙에 따라 JSON 객체 하나만 생성해야 한다.
 
     이 도구는 “조건을 선언”만 하며,
     실제 날짜 계산, 달력 처리 등은 서버에서 수행한다.
@@ -319,23 +326,13 @@ def extract_notice_query(user_query: str) -> dict:
           "field" : "basicPrice"
         }
     }
-    """
-    llm_output = """
-    {
-      "intent": "list",
-      "limit": 1,
-      "filter": {
-        "bidRealId": "20240123456-000",
-        "region": null,
-        "organization": null,
-        "estimatePrice": null,
-        "basicPrice": null,
-        "minimumBidRate": null,
-        "bidRange": null,
-        "timeRange": null
-      },
-      "aggregate": null
-    }
+    """ 
+    prompt+=f"""
+    질문:
+    {user_query}
+    
+    출력은 json 객체 하나만 반환한다.
     """
 
-    return json.loads(llm_output)
+    response = llm.invoke(prompt)
+    return response.content

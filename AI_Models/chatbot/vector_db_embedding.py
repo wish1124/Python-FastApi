@@ -20,15 +20,30 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMAGE_DIR = os.path.join(BASE_DIR, "usage_data", "images")
 API_EXCEL_PATH = os.path.join(BASE_DIR, "usage_data", "api정의서.xlsx")
 
+'''
 IMAGE_FAISS_DIR = "faiss_db/image_faiss"     # 웹페이지 스크린샷 FAISS 저장 경로
 API_FAISS_DIR = "faiss_db/api_faiss"         # API 정의서 FAISS 저장 경로
 # faiss_db 내부에서 image_faiss와 api_faiss 폴더가 각각 생성된다.
-
 os.makedirs("faiss_db", exist_ok=True)        # faiss_db 폴더 생성(이미 있으면 생성하지 않음)
+'''
+
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+IMAGE_FAISS_DIR = BASE_DIR / "faiss_db" / "image_faiss"
+API_FAISS_DIR= BASE_DIR / "faiss_db" / "api_faiss"
+
+'''
+#로컬 테스트용, 경로에 한글이 있으면 C드라이브로 옮겨서 진행할 것
+BASE_DIR = Path("C:/faiss_db")
+IMAGE_FAISS_DIR = BASE_DIR / "image_faiss"
+API_FAISS_DIR= BASE_DIR / "api_faiss"
+'''
 
 # =========================
 # FAISS 생성 임베딩 모델 설정
 # =========================
+'''
 def load_api_keys(filepath="api_key.txt"): 
     with open(filepath, "r") as f:
         for line in f:
@@ -38,6 +53,10 @@ def load_api_keys(filepath="api_key.txt"):
                 os.environ[key.strip()] = value.strip()
         
 load_api_keys(os.path.join(BASE_DIR, "usage_api.txt"))   # API 키 로드 및 환경변수 설정
+'''
+from dotenv import load_dotenv
+load_dotenv()
+
 
 embeddings = OpenAIEmbeddings(model = "text-embedding-3-small") # 임베딩 모델 초기화
 

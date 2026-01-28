@@ -15,6 +15,8 @@ import PyPDF2
 from datetime import datetime
 import logging
 import uuid
+import json
+from langchain_core.messages import ToolMessage
 
 # 분리된 그래프 앱 import
 from graph import graph_app
@@ -146,10 +148,19 @@ async def chat_endpoint(req: ChatRequest):
         
         # 마지막 메시지(AI 답변) 추출
         last_message = final_state["messages"][-1]
+
+        # tool 결과면 dict로 변환
+        if isinstance(last_message, ToolMessage):
+            try:
+                parsed = json.loads(last_message.content)
+                last_message = parsed
+            except json.JSONDecodeError:
+                # 파싱 실패하면 그대로 문자열 반환
+                last_message = last_message.content
         
         return {
             "query": req.query,
-            "response": last_message.content,
+            "response": last_message,
             "thread_id": req.thread_id
         }
         

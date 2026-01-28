@@ -26,6 +26,11 @@ from vector_db_embedding import *
 # 기본 설정
 # =========================
 # 사용할 API 키 불러오기
+
+from dotenv import load_dotenv
+load_dotenv()
+
+'''
 def load_api_keys(filepath="api_key.txt"): 
     with open(filepath, "r") as f:
         for line in f:
@@ -36,27 +41,40 @@ def load_api_keys(filepath="api_key.txt"):
         
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_api_keys(os.path.join(BASE_DIR, "usage_api.txt"))   # API 키 로드 및 환경변수 설정
+'''
 
 # EMBEDDING_MODEL = "text-embedding-3-small"     # Embedding 모델(text-embedding-3-small) 설정
 LLM_MODEL = "gpt-5-nano"                       # LLM 모델(gpt-5-nano) 설정
 
 # embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)  # Embedding 모델 초기화
-llm = ChatOpenAI(model=LLM_MODEL, temperature=0.2)    # LLM 모델 초기화
+llm = ChatOpenAI(model=LLM_MODEL, temperature=1)    # LLM 모델 초기화
 
 # =========================
 # Tool: usage_tool (사용자 질문 처리 -> 답변값(response) 반환)
 # =========================
 @tool
-def usage_tool(query: str, img: str, api: str):
+def usage_tool(query: str):
     """
-    query : 사용자 질문
-    img   : 웹페이지 스크린샷 image FAISS DB 경로
-    api   : API 정의서 엑셀 FAISS DB 경로
+    이 도구는 사용자가 묻는 질문이
+    사이트의 기능, 화면 사용법, 메뉴 설명, 서비스 이용 방법과 관련된 경우에만 사용한다.
+
+    공고 조회, 조건 검색, 데이터 조회 목적의 질문에는 절대 사용하지 않는다.
+
+    이 도구는 다음과 같은 질문에 사용된다:
+    - 사이트에서 특정 기능을 어떻게 사용하는지 묻는 경우
+    - 화면 구성이나 버튼의 역할을 설명해 달라는 질문
+    - 서비스 이용 흐름이나 절차를 설명해 달라는 질문
+
+    입력값:
+    - query: 사용자의 원본 질문
+
+    출력:
+    - 사용자에게 친절한 존댓말 자연어 설명 문자열
     """
 
     # 1️⃣ FAISS 로드 (완전 분리)
-    image_faiss = load_image_faiss(img)
-    api_faiss = load_api_faiss(api)
+    image_faiss = load_image_faiss(IMAGE_FAISS_DIR)
+    api_faiss = load_api_faiss(API_FAISS_DIR)
     # 2️⃣ 벡터 유사도 검색
     image_docs = search_image_context(image_faiss, query)
     api_docs = search_api_context(api_faiss, query)
@@ -80,6 +98,7 @@ def usage_tool(query: str, img: str, api: str):
         - "상황별 팁", "시나리오", "팁"의 정보는 제공하지 않는다.
         - 답변 시작문구의 내용 소개, 끝문구의 추천 내용은 간단하고 짧게 작성하라.
         - 답변에 영문자를 사용하지 말 것.
+        - 답변을 임의로 지어내서 답하지 않는다.
         - 모든 답변은 공손한 존대말을 사용하라.
         
         [웹페이지 스크린샷 기반 정보]

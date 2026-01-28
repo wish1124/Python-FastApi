@@ -1,0 +1,55 @@
+{
+    "limit": number | null, ->공고 조회 시 갯수 제한 기본값 3으로 둠. 공고 번호가 ~인 공고 보여줘 면 단건 조회라 1임. ~인 공고 낙찰가 평균 보여줘는 null임 (값이 하나밖에 안나오니까)
+    "filter": { -> 조회 조건들 모은 거
+      "bidRealId": string | null, -> 공고번호 123-000
+      "name": string | null, -> 공고명 조회 시 필터 공고명이 '포함'되는으로 조회해야할 듯 ex) 화장실 공사 -> ~ 초등학교 화장실 공사 공고 조회되게
+      "region": string | null, -> 공사지역(공고지역?) 조회 시 필터 지역명이 '포함'되는으로 조회해야할 듯 ex)부산 -> 부산광역시 ~ 인 공고 조회되게 
+
+      "organization": string | null, ->기관명 기관명도 '포함'되게 조회하는게 좋을 듯함
+
+    "estimatePrice": { -> 추정가격
+      "from": { "op": "gte" | "gt" | "eq", "value": number } | null, ->하한 조건 ex) ~이상인 ~초과 / gte: 이상, gt: 초과, eq=~인 (동일조건)
+      "to":   { "op": "lte" | "lt",        "value": number } | null -> 상한 조건 ex) ~보다 작은 ~미만 / lte: 이하 lt: 미만 eq는 from에 넣었음
+    } | null, ->추정가격 관련 조건 없으면
+
+    "basicPrice": {-> 기초금액
+      "from": { "op": "gte" | "gt" | "eq", "value": number } | null,  ->하한 조건 ex) ~이상인 ~초과 / gte: 이상, gt: 초과, eq=~인 (동일조건)
+      "to":   { "op": "lte" | "lt",        "value": number } | null -> 상한 조건 ex) ~보다 작은 ~미만 / lte: 이하 lt: 미만 eq는 from에 넣었음
+    } | null, -> 기초금액 관련 조건 없으면
+
+    "minimumBidRate": {->낙찰하한율
+      "from": { "op": "gte" | "gt" | "eq", "value": number } | null, ->하한 조건 ex) ~이상인 ~초과 / gte: 이상, gt: 초과, eq=~인 (동일조건)
+      "to":   { "op": "lte" | "lt",        "value": number } | null -> 상한 조건 ex) ~보다 작은 ~미만 / lte: 이하 lt: 미만 eq는 from에 넣었음
+    } | null, -> 낙찰하한율 관련 조건 없으면
+
+    "bidRange": {->예가범위
+      "from": { "op": "gte" | "gt" | "eq", "value": number } | null,  ->하한 조건 ex) ~이상인 ~초과 / gte: 이상, gt: 초과, eq=~인 (동일조건)
+      "to":   { "op": "lte" | "lt",        "value": number } | null -> 상한 조건 ex) ~보다 작은 ~미만 / lte: 이하 lt: 미만 eq는 from에 넣었음
+    } | null, -> 예가범위 관련 조건 없으면
+
+    "timeRange": { ->시간 범위 질문시 입찰시작/종료/개찰일 따라 물어볼 수 있어서 따로 추가함
+      "base": "startDate" | "endDate" | "openDate", -> 순서대로 입찰시작일 / 입찰종료일 / 개찰일. 만약 명시 없이 A~B 기간 공고 보여줘는 endDate로 나오게 함 
+      "from": { -> 날짜 시작일
+        "kind": "absolute" | "calendar", ->absolute: 2021년12월31일12시31분, 202112311231 같이 명시적인 날짜인 경우 absolute, calander는 현재날짜기준 상대적 날짜 ex) 한달 뒤 이면 calender임
+        "value": number | null, -> kind가 absolute일 때 날짜가 언제인지. 2021년12월31일이라하면 202112310000으로 담기게함
+        "unit": "day" | "week" | "month" | "year" | null, ->kind가 calendar일 때 어떤거 기준으로 묻는지 나타냄 ex) 작년-> year 다음달-> month
+        "offset": number | null,-> kind가 calender일 때 현재 날짜 기준 얼마나 전/후 인지 ex)작년->-1 내일->1
+        "position": "start" | "end" | null ->kind가 calender일 때 초인지 말인지 작년 초 -> start 다음달 말-> end 딱히 언급 없으면 end
+      },
+      "to": {-> 날짜 종료일 밑에는 from과 동일
+        "kind": "absolute" | "calendar",
+        "value": number | null,
+        "unit": "day" | "week" | "month" | "year" | null,
+        "offset": number | null,
+        "position": "start" | "end" | null
+      }
+    } | null -> 상대적 날짜 안 물으면 null
+  },
+  "output": [ ->출력 형태를 어떻게 할지 ex) ~인 공고의 ~보여줘, ~의 평균 보여줘, ~공고 보여줘, 공고 갯수 알려줘 등 단, 필드나 계산 값 조회시 여러개 할 수 있음 낙찰하한율, 기초금액 필드 보여주기 / 여러 공고의 추정가격 평균, 예가범위 최솟값 보여주기 / 특정 필드 + 계산값,공고갯수는 조회 안되게함 
+  {
+    "type": "all" | "field" | "agg" | "error", -> all: 모든 필드 보여주기 field-> 특정 필드만 골라서 보여주기, agg->계산값이나 갯수 알려주기. error -> 질문이 이상하거나 특정 필드(단건/여러건 조회 가능) + 계산값,공고갯수(값이 하나만 나옴) 조회시 
+    "field": "bidRealId" | "name" | "region" | "organization" | "estimatePrice" | "basicPrice" | "minimumBidRate" | "bidRange" | "startDate" | "endDate" | "openDate" | null, -> 어떤 필드를 보여줄지. 여러개 가능
+    "op": "min" | "max" | "avg" | "sum" | "count" | null -> 어떤 계산을 알려줄지 count는 공고의 갯수를 알려주는거임
+  }
+]->배열 형태로 여러 필드/ 여러 계산 값 조회시 담기게끔함
+}

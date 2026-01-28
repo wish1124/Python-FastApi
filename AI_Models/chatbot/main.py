@@ -149,18 +149,9 @@ async def chat_endpoint(req: ChatRequest):
         # 마지막 메시지(AI 답변) 추출
         last_message = final_state["messages"][-1]
 
-        # tool 결과면 dict로 변환
-        if isinstance(last_message, ToolMessage):
-            try:
-                parsed = json.loads(last_message.content)
-                last_message = parsed
-            except json.JSONDecodeError:
-                # 파싱 실패하면 그대로 문자열 반환
-                last_message = last_message.content
-        
         return {
             "query": req.query,
-            "response": last_message,
+            "response": last_message.content,
             "thread_id": req.thread_id
         }
         

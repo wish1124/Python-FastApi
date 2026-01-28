@@ -33,7 +33,7 @@ def extract_notice_query(user_query: str) -> dict:
     --------------------------------------------------
 
     timeRange (시간 조건 선언)
-
+    
     timeRange는 “언제의 공고를 조회할 것인가”를
     계산 없이 선언적으로 표현하는 필드이다.
 

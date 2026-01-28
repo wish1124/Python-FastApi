@@ -19,17 +19,19 @@ def extract_notice_query(user_query: str) -> dict:
     중요 규칙:
     - 출력 JSON의 필드명은 반드시 아래에 정의된 이름만 사용해야 한다.
     - 정의되지 않은 필드명을 새로 만들면 안 된다.
-    - 명시하지 않는 필드는 반드시 null로 설정한다.
+    - filter에서 명시하지 않는 필드는 반드시 null로 설정한다.
+    - output은 항상 최소 1개 이상의 객체를 포함해야 한다.
     - 출력은 반드시 JSON 객체 하나만 반환한다. 설명 문장, 주석, 자연어는 절대 포함하지 않는다.
     - 시간 관련 조건은 반드시 timeRange로만 표현한다.
     - 필드의 의미를 추론해 임의로 확장하거나 축약하지 않는다.
     - 숫자형 날짜는 yyyyMMddHHmm 형식만 사용한다. (예: 202601231359)
     - LLM은 날짜 계산을 하지 않고 반드시 선언형 구조로만 표현한다.
-    - 사용자의 질문에서 공고 조회 조건을 합리적으로 추출할 수 없는 경우 ex)조건 필드는 있으나 op / 방향 / 기준(base)이 모호하거나 숫자 범위가 상식적으로 충돌하는 경우, 사용자의 질문이 공고 조회 조건으로 해석 불가능한 경우 모든 필드를 null로 설정하고 intent는 list로 설정한다.
+    - 사용자의 질문이 공고 목록 조회 의도를 명확히 표현했으면 filter가 모두 null이어도 output은 (all/field)로 정상 조회하며 limit=3으로 제한한다. 단, 공고 조회 의도가 불분명하면 filter 객체의 모든 필드를 null로 채우고 output은 [{"type":"error","field":null,"op":null}]로 채운다.
 
     이 도구의 출력은 백엔드 서버에서 직접 실행된다.
     출력 JSON이 잘못되면 잘못된 DB 조회로 이어진다.
     --------------------------------------------------
+
     timeRange (시간 조건 선언)
 
     timeRange는 “언제의 공고를 조회할 것인가”를
@@ -52,7 +54,8 @@ def extract_notice_query(user_query: str) -> dict:
     2. "까지", "부터", "이전", "이후", "이내" 같은 표현은
       기간의 방향·범위를 나타낼 뿐 base를 결정하지 않는다.
 
-    3. 명시적인 기준이 없는 경우 (예: “언제부터 언제까지 공고 보여줘”) base는 openDate로 설정한다.
+    3. 명시적인 기준이 없는 경우 (예: “언제부터 언제까지 공고 보여줘”) base는 endDate로 설정한다.
+       output에 endDate/startDate/openDate가 포함되어 있어도 timeRange.base를 결정하는 근거로 사용하지 않는다. base는 오직 사용자가 “마감일 기준”, “개찰일 기준”처럼 날짜 기준을 직접 언급했을 때만 설정한다.
 
     4. 둘 이상의 기준이 동시에 언급된 경우, 문장에서 직접 수식되는 기준을 우선한다.
 
@@ -151,30 +154,60 @@ def extract_notice_query(user_query: str) -> dict:
     단일 값 비교의 경우:
 
     - from과 to를 모두 사용하지 않고
-    - from.op = eq 만 사용하며 from.to 는 반드시 null 이다.
+    - from.op = eq 만 사용하며 to 는 반드시 null 이다.
 
     --------------------------------------------------
-    intent는 사용자가 “무엇을 원하는가”를 선언한다.
-    서버는 intent를 해석하지 않고 그대로 실행 분기만 한다.
+    output은 사용자가 원하는 결과 형태를 선언한다.
 
-    limit은 LIST intent에서만 의미가 있다.
-    "단일 대상 조회”라고 판단한 경우 limit=1을 선언한다.
-    intent가 count 또는 aggregate인 경우 limit은 반드시 null로 설정한다.
+    output은 항상 배열이며 최소 1개 항목을 가진다.
 
-    aggregate는 count / aggregate intent에서만 사용한다.
-    list와 동시에 사용하지 않는다.
+    output 항목은 아래 4가지 type 중 하나이다.
 
+    1) type="all"
+      - 공고 전체 row를 조회한다.
+      - field=null, op=null 이어야 한다.
+
+    2) type="field"
+      - 특정 필드 값만 조회한다.
+      - field는 반드시 지정해야 한다.
+      - op는 반드시 null이다.
+
+    3) type="agg"
+      - 집계 결과를 조회한다.
+      - op는 반드시 지정해야 한다.
+      - field는 count를 제외하고 반드시 지정해야 한다.
+      - count 집계의 경우 field=null 허용한다.
+    4) type="error"
+      - 요청이 모호하거나 output 충돌이 발생한 경우 사용한다.
+      - field=null, op=null 이어야 한다.
+      - 서버는 type="error"가 포함되면 절대 DB 쿼리를 실행하지 않는다.
+
+    서버는 output에 agg가 포함되면 집계 쿼리를 실행한다.
+    output에는 agg를 여러 개 포함할 수 있다.
+    output에 agg가 없으면 일반 조회를 실행한다.
+    output에는 agg와 field/all을 절대 혼합하지 않는다.
+    output 배열에 agg와 field/all이 동시에 존재하면 잘못된 요청이다. 이 경우 output은 [{"type":"error","field":null,"op":null}] 로 설정한다.
+    type="field"인 경우 op는 반드시 null이며 절대 다른 값을 넣지 않는다.
+    --------------------------------------------------
+
+    limit 규칙:
+
+    - limit은 row 조회(all/field)일 때만 의미가 있다.
+    - output에 agg만 있는 경우 limit은 반드시 null이다.
+    - 사용자가 단일 공고를 특정하면 limit=1로 설정한다.
+    - 사용자가 개수 제한을 말하지 않고 row 조회(all/field)인 경우 limit=3로 둔다.
+    - output이 error인 경우 limit은 반드시 null이다.
 
 
 
     사용 가능한 필드:
     {
-  "intent": "list | count | aggregate",
-  "limit": number | null,
-  "filter": {
-    "bidRealId": string | null,
-    "region": string | null,
-    "organization": string | null,
+    "limit": number | null,
+    "filter": {
+      "bidRealId": string | null,
+      "name": string | null,
+      "region": string | null,
+      "organization": string | null,
 
     "estimatePrice": {
       "from": { "op": "gte" | "gt" | "eq", "value": number } | null,
@@ -197,27 +230,30 @@ def extract_notice_query(user_query: str) -> dict:
     } | null,
 
     "timeRange": {
-      "base": "startDate | endDate | openDate",
+      "base": "startDate" | "endDate" | "openDate",
       "from": {
-        "kind": "absolute | calendar",
+        "kind": "absolute" | "calendar",
         "value": number | null,
-        "unit": "day | week | month | year" | null,
+        "unit": "day" | "week" | "month" | "year" | null,
         "offset": number | null,
-        "position": "start | end" | null
+        "position": "start" | "end" | null
       },
       "to": {
-        "kind": "absolute | calendar",
+        "kind": "absolute" | "calendar",
         "value": number | null,
-        "unit": "day | week | month | year" | null,
+        "unit": "day" | "week" | "month" | "year" | null,
         "offset": number | null,
-        "position": "start | end" | null
+        "position": "start" | "end" | null
       }
     } | null
   },
-  "aggregate": {
-    "type": "count | avg | sum | min | max",
-    "field": "estimatePrice | basicPrice | minimumBidRate | bidRange"
-  } | null
+  "output": [
+  {
+    "type": "all" | "field" | "agg" | "error",
+    "field": "bidRealId" | "name" | "region" | "organization" | "estimatePrice" | "basicPrice" | "minimumBidRate" | "bidRange" | "startDate" | "endDate" | "openDate" | null,
+    "op": "min" | "max" | "avg" | "sum" | "count" | null
+  }
+]
 }
 
     구조화 결과 예시:
@@ -227,10 +263,10 @@ def extract_notice_query(user_query: str) -> dict:
 
     출력:
     {
-      "intent": "list",
       "limit": 1,
       "filter": {
         "bidRealId": "20240123456-000",
+        "name": null,
         "region": null,
         "organization": null,
         "estimatePrice": null,
@@ -239,20 +275,20 @@ def extract_notice_query(user_query: str) -> dict:
         "bidRange": null,
         "timeRange": null
       },
-      "aggregate": null
+      "output": [{"type": "all", "field": null, "op":null}]
     }
 
     예시 2)
-    입력: "부산 지역에 2026년 1월 1일부터 다음 달 말까지 개찰일 기준 공고의 개수를 보여줘"
+    입력: "부산 지역에 2026년 1월 1일부터 다음 달 말까지 개찰일 기준 에이블스쿨에서 진행하는 학교 급식실 공사 공고의 개수를 보여줘"
 
     출력:
     {
-      "intent": "count",
       "limit": null,
       "filter": {
         "bidRealId": null,
+        "name": "학교 급식실",
         "region": "부산",
-        "organization": null,
+        "organization": "에이블스쿨",
         "estimatePrice": null,
         "basicPrice": null,
         "minimumBidRate": null,
@@ -275,10 +311,9 @@ def extract_notice_query(user_query: str) -> dict:
               }
             }
       },
-      "aggregate": {
-        "type": "count",
-        "field": null
-      }
+      "output": [
+      {"type": "agg", "field": null, "op": "count"}
+      ]
     }
 
 
@@ -287,10 +322,10 @@ def extract_notice_query(user_query: str) -> dict:
 
     출력:
     {
-      "intent": "aggregate",
       "limit": null,
       "filter": {
         "bidRealId": null,
+        "name": null,
         "region": "서울",
         "organization": null,
         "estimatePrice": null,
@@ -321,10 +356,49 @@ def extract_notice_query(user_query: str) -> dict:
         }
         }
         },
-        "aggregate": {
-          "type" : "avg",
-          "field" : "basicPrice"
-        }
+        "output": [
+        {"type" : "agg", "field" : "basicPrice", "op" : "avg"}
+        ]
+    }
+
+    예시 4) 
+    입력: "2023년11월11일부터 내년초까지 공고 중 공고의 마감일과 추정가격을 알려줘"
+
+    출력: 
+    {
+      "limit": 3,
+      "filter": {
+        "bidRealId": null,
+        "name": null,
+        "region": null,
+        "organization": null,
+        "estimatePrice": null,
+        "basicPrice": null,
+        "minimumBidRate": null,
+        "bidRange": null,
+        "timeRange": {
+          "base": "endDate",
+          "from": {
+            "kind": "absolute",
+            "value": 202311110000,
+            "unit": null,
+            "offset": null,
+            "position": null
+          },
+          "to": {
+            "kind": "calendar",
+            "value": null,
+            "unit": "year",
+            "offset": 1,
+            "position": "start"
+              }
+            }
+      }
+      },
+      "output": [
+        { "type": "field", "field": "endDate", "op": null },
+        { "type": "field", "field": "estimatePrice", "op": null }
+      ]
     }
     """ 
     prompt+=f"""

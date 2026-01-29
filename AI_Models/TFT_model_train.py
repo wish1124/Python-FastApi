@@ -22,35 +22,27 @@ print(f"Using device: {device}")
 print("데이터 로딩 중...")
 df = pd.read_csv("../dataset/dataset_feature_selected.csv")
 
-# 2. 난이도계수 제거
-print("난이도계수 컬럼 제거 중...")
-if '난이도계수' in df.columns:
-    print("난이도계수 컬럼 발견, 제거합니다.")
-    df = df.drop(columns=['난이도계수'])
-    print("난이도계수 제거 완료")
+# 2. 4개 핵심 피처만 선택
+print("4개 핵심 피처만 선택 중...")
+selected_features = ['안전관리비비율', '안전관리비_적용여부', '추정가격', '기초금액']
+target_col = '사정율'
 
-# 입찰준비기간 제거
-print("입찰준비기간 컬럼 제거 중...")
-if '입찰준비기간' in df.columns:
-    print("입찰준비기간 컬럼 발견, 제거합니다.")
-    df = df.drop(columns=['입찰준비기간'])
-    print("입찰준비기간 제거 완료")
+# 필요한 컬럼들이 존재하는지 확인
+missing_cols = [col for col in selected_features if col not in df.columns]
+if missing_cols:
+    print(f"경고: 다음 컬럼들이 데이터에 없습니다: {missing_cols}")
+    print(f"사용 가능한 컬럼: {df.columns.tolist()}")
+    exit()
 
-# 지역의무공동계약여부 제거
-print("지역의무공동계약여부 컬럼 제거 중...")
-if '지역의무공동계약여부' in df.columns:
-    print("지역의무공동계약여부 컬럼 발견, 제거합니다.")
-    df = df.drop(columns=['지역의무공동계약여부'])
-    print("지역의무공동계약여부 제거 완료")
-
-print(f"타겟 변수: 사정율")
+# 타겟과 선택된 피처만 추출
+df = df[selected_features + [target_col]]
+df = df.fillna(0)
+print(f"선택된 피처: {selected_features}")
+print(f"타겟 변수: {target_col}")
 print(f"데이터 shape: {df.shape}")
 
 # 3. 특성과 타겟 분리
-df = df.fillna(0)
-target_col = '사정율'
-feature_cols = [col for col in df.columns if col != target_col]
-
+feature_cols = selected_features
 X = df[feature_cols].values
 y = df[target_col].values.reshape(-1, 1)
 
@@ -100,7 +92,7 @@ print(f"Pin memory: {pin_memory}")
 
 # 8. Transformer 기반 Quantile Regression 모델 정의
 class QuantileTransformerRegressor(nn.Module):
-    def __init__(self, input_dim, num_quantiles=5, d_model=128, nhead=8, num_layers=3, dim_feedforward=512, dropout=0.1):
+    def __init__(self, input_dim, num_quantiles=999, d_model=128, nhead=8, num_layers=3, dim_feedforward=512, dropout=0.1):
         super(QuantileTransformerRegressor, self).__init__()
         self.num_quantiles = num_quantiles
         
@@ -150,10 +142,10 @@ input_dim = X_train.shape[1]
 model = QuantileTransformerRegressor(
     input_dim=input_dim,
     num_quantiles=num_quantiles,
-    d_model=512,
+    d_model=128,  # 512에서 1/4로 축소
     nhead=8,
     num_layers=3,
-    dim_feedforward=2048,
+    dim_feedforward=512,  # 2048에서 1/4로 축소
     dropout=0.1
 ).to(device)
 
@@ -256,7 +248,7 @@ train_losses = []
 val_losses = []
 
 print("\n학습 시작...")
-os.makedirs('./results_tft_20feat', exist_ok=True)
+os.makedirs('./results_tft_4feat', exist_ok=True)
 
 pbar_epoch = tqdm(range(num_epochs), desc="Epoch", position=0)
 for epoch in pbar_epoch:
@@ -292,7 +284,7 @@ for epoch in pbar_epoch:
             'optimizer_state_dict': optimizer.state_dict(),
             'train_loss': train_loss,
             'val_loss': val_loss,
-        }, './results_tft_20feat/best_model.pt')
+        }, './results_tft_4feat/best_model.pt')
         pbar_epoch.write(f"  → 최고 모델 저장! (Val Loss: {val_loss:.6f}){gpu_info} | {bottleneck}")
     else:
         patience_counter += 1
@@ -305,9 +297,9 @@ pbar_epoch.close()
 print("\n학습 완료!")
 
 # 14. 최고 모델 로드
-if os.path.exists('./results_tft_20feat/best_model.pt'):
+if os.path.exists('./results_tft_4feat/best_model.pt'):
     try:
-        checkpoint = torch.load('./results_tft_20feat/best_model.pt')
+        checkpoint = torch.load('./results_tft_4feat/best_model.pt')
         model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         print(f"최고 모델 로드 완료 (Epoch {checkpoint['epoch']+1}, Val Loss: {checkpoint['val_loss']:.6f})")
     except RuntimeError as e:
@@ -326,8 +318,8 @@ plt.title('Training and Validation Loss', fontsize=14, fontweight='bold')
 plt.legend(fontsize=11)
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
-plt.savefig('./results_tft_20feat/train_val_loss.png', dpi=300, bbox_inches='tight')
-print("Loss 그래프 저장: ./results_tft_20feat/train_val_loss.png")
+plt.savefig('./results_tft_4feat/train_val_loss.png', dpi=300, bbox_inches='tight')
+print("Loss 그래프 저장: ./results_tft_4feat/train_val_loss.png")
 plt.show()
 
 # 16. 테스트 평가
@@ -428,8 +420,8 @@ axes[1, 1].legend(fontsize=10)
 axes[1, 1].grid(True, alpha=0.3)
 
 plt.tight_layout()
-plt.savefig('./results_tft_20feat/gt_vs_prediction.png', dpi=300, bbox_inches='tight')
-print("예측 그래프 저장: ./results_tft_20feat/gt_vs_prediction.png")
+plt.savefig('./results_tft_4feat/gt_vs_prediction.png', dpi=300, bbox_inches='tight')
+print("예측 그래프 저장: ./results_tft_4feat/gt_vs_prediction.png")
 plt.show()
 
 # 18. 예측 결과 CSV 저장
@@ -442,7 +434,7 @@ result_dict['Residual'] = gt_values - pred_values
 result_dict['Absolute_Error'] = np.abs(gt_values - pred_values)
 
 result_df = pd.DataFrame(result_dict)
-result_df.to_csv('./results_tft_20feat/predictions.csv', index=False)
-print("예측 결과 저장: ./results_tft_20feat/predictions.csv")
+result_df.to_csv('./results_tft_4feat/predictions.csv', index=False)
+print("예측 결과 저장: ./results_tft_4feat/predictions.csv")
 
 print("\n모든 작업 완료!")

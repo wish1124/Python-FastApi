@@ -30,16 +30,15 @@ print(f"Using device: {device}")
 print("데이터 로딩 중...")
 df = pd.read_csv("../dataset/dataset_feature_selected.csv")
 
-# 컬럼 제거 (train과 동일)
-print("컬럼 제거 중...")
-# 20개 feature 사용 - 난이도계수, 입찰준비기간, 지역의무공동계약여부 제거
-if '난이도계수' in df.columns:
-    df = df.drop(columns=['난이도계수'])
-if '입찰준비기간' in df.columns:
-    df = df.drop(columns=['입찰준비기간'])
-if '지역의무공동계약여부' in df.columns:
-    df = df.drop(columns=['지역의무공동계약여부'])
-print("난이도계수, 입찰준비기간, 지역의무공동계약여부 제거 완료 - 20개 feature 사용")
+# 4개 핵심 피처만 선택 (train과 동일)
+print("4개 핵심 피처 선택 중...")
+selected_features = ['안전관리비비율', '안전관리비_적용여부', '추정가격', '기초금액']
+if not all(col in df.columns for col in selected_features):
+    print(f"경고: 다음 컬럼들이 데이터에 없습니다: {selected_features}")
+    print(f"사용 가능한 컬럼: {df.columns.tolist()}")
+    exit()
+df = df[selected_features + ['사정율']]
+print(f"선택된 피처: {selected_features}")
 
 # 특성과 타겟 분리
 df = df.fillna(0)
@@ -63,7 +62,7 @@ X_test = scaler_X.transform(X_test)
 
 # 3. 모델 정의 (학습과 동일)
 class QuantileTransformerRegressor(nn.Module):
-    def __init__(self, input_dim, num_quantiles=5, d_model=128, nhead=8, num_layers=3, dim_feedforward=512, dropout=0.1):
+    def __init__(self, input_dim, num_quantiles=999, d_model=128, nhead=8, num_layers=3, dim_feedforward=512, dropout=0.1):
         super(QuantileTransformerRegressor, self).__init__()
         self.num_quantiles = num_quantiles
         
@@ -101,21 +100,21 @@ class QuantileTransformerRegressor(nn.Module):
 # 4. 모델 로드
 quantiles = np.linspace(0.001, 0.999, 999).tolist()  # 0.001 ~ 0.999 (999개)
 num_quantiles = len(quantiles)
-input_dim = X_train.shape[1]
+input_dim = 4  # 4 features
 
 model = QuantileTransformerRegressor(
     input_dim=input_dim,
     num_quantiles=num_quantiles,
-    d_model=512,
+    d_model=128,
     nhead=8,
     num_layers=3,
-    dim_feedforward=2048,
+    dim_feedforward=512,
     dropout=0.1
 ).to(device)
 
 print("\n학습된 모델 로드 중...")
 try:
-    checkpoint = torch.load('./results_tft_20feat/best_model.pt', map_location=device)
+    checkpoint = torch.load('./results_tft_4feat/best_model.pt', map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     print(f"✓ 모델 로드 완료 (Epoch {checkpoint['epoch']+1}, Val Loss: {checkpoint['val_loss']:.6f})")
 except Exception as e:

@@ -8,7 +8,7 @@ from pydantic import BaseModel, validator, root_validator
 from dotenv import load_dotenv
 from pyngrok import ngrok
 from langchain_core.messages import HumanMessage
-from typing import Optional
+from typing import Optional, Dict, Any
 import requests
 from pathlib import Path
 import PyPDF2
@@ -80,7 +80,9 @@ async def log_requests(request: Request, call_next):
 
 # 요청 데이터 모델
 class ChatRequest(BaseModel):
-    query: str
+    type: str="query"
+    query: str=""
+    payload: Optional[Dict[str,Any]]=None
     thread_id: str = "default_session"  # 세션 구분을 위한 ID
 
 class AnalyzeRequest(BaseModel):
@@ -138,8 +140,26 @@ async def chat_endpoint(req: ChatRequest):
     LangGraph를 실행하여 답변을 생성하는 엔드포인트
     """
     try:
+        if req.type == "query":
+            content = req.query
+
+        else:
+            # payload 기반 후처리 입력
+            content = json.dumps(
+                {
+                    "type": req.type,
+                    "payload": req.payload
+                },
+                ensure_ascii=False
+            )
+        
+        #질문 형태가 아닌데 담겨오는 값이 없을 때
+        if req.type != "query" and req.payload is None:
+            raise HTTPException(status_code=400, detail="payload is required")
+
         # LangGraph 입력 메시지 생성
-        inputs = {"messages": [HumanMessage(content=req.query)]}
+        
+        inputs = {"messages": [HumanMessage(content=content)]}
         config = {"configurable": {"thread_id": req.thread_id}}
         
         # 그래프 실행 (invoke는 동기 함수이므로 async def 안에서는 주의 필요)
@@ -150,7 +170,7 @@ async def chat_endpoint(req: ChatRequest):
         last_message = final_state["messages"][-1]
 
         return {
-            "query": req.query,
+            "type": req.type,
             "response": last_message.content,
             "thread_id": req.thread_id
         }

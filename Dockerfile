@@ -19,7 +19,7 @@ COPY . .
 
 # 4. [핵심] 모델 폴더 명시적 복사 (보험용)
 # .dockerignore에 걸려있더라도 이 명령어가 아래에 있으면 강제로 덮어씌워 복사합니다.
-COPY results_transformer/ /app/results_transformer/
+COPY results_transformer_4feat/ /app/results_transformer_4feat/
 
 # 5. 환경 변수 설정
 ENV PYTHONUNBUFFERED=1
@@ -27,5 +27,3 @@ EXPOSE 9999
 
 # 6. [매우 중요] CMD는 반드시 파일의 맨 마지막에 딱 한 번만 와야 합니다!
 CMD ["python", "RAG_server.py"]
-
-## 수정

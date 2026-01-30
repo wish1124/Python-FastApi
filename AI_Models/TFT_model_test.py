@@ -32,7 +32,7 @@ df = pd.read_csv("../dataset/dataset_feature_selected.csv")
 
 # 4개 핵심 피처만 선택 (train과 동일)
 print("4개 핵심 피처 선택 중...")
-selected_features = ['안전관리비비율', '안전관리비_적용여부', '추정가격', '기초금액']
+selected_features = ['낙찰하한율', '예가범위', '추정가격', '기초금액']
 if not all(col in df.columns for col in selected_features):
     print(f"경고: 다음 컬럼들이 데이터에 없습니다: {selected_features}")
     print(f"사용 가능한 컬럼: {df.columns.tolist()}")

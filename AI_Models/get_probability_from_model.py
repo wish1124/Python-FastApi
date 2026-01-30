@@ -241,9 +241,7 @@ class ProbabilityPredictor:
                 'center': float((lower + upper) / 2),
                 'pdf': avg_pdf,  # 확률밀도 f(y)
                 'probability': float(probability),  # P(y ∈ [lower, upper]) - 정규화 전
-                'probability_percent': float(probability * 100),
-                'quantile_count': int(len(quantile_indices)),
-                'quantile_range': f'{self.quantiles[quantile_indices[0]]*100:.1f}% ~ {self.quantiles[quantile_indices[-1]]*100:.1f}%'
+                'probability_percent': float(probability * 100)
             })
         
         # 전체 확률 정규화 (∑P = 1이 되도록)
@@ -292,8 +290,6 @@ class ProbabilityPredictor:
             'center': most_probable['center'],
             'probability': most_probable['probability'],
             'probability_percent': most_probable['probability_percent'],
-            'quantile_count': most_probable['quantile_count'],
-            'quantile_range': most_probable['quantile_range'],
             'statistics': result['statistics'],
             'prediction_range': result['prediction_range'],
             'input_features': result['input_features']
@@ -367,7 +363,7 @@ def main():
     for i, r in enumerate(result['top_ranges'], 1):
         lower_val = r['lower']*100 - 100
         upper_val = r['upper']*100 - 100
-        print(f"  {i}위. {lower_val:+.1f}~{upper_val:+.1f} (확률: {r['probability_percent']:.2f}%, 999개 중 {r['quantile_count']}개)")
+        print(f"  {i}위. {lower_val:+.1f}~{upper_val:+.1f} (확률: {r['probability_percent']:.2f}%)")
 
 
 if __name__ == "__main__":

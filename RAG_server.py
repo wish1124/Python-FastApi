@@ -20,7 +20,7 @@ from pathlib import Path
 # --- 모듈 임포트 ---
 try:
     from BidAssitanceModel import BidRAGPipeline
-    from get_probability_from_model import ProbabilityPredictor  # ✅ TFT 모델 사용
+    from get_probability_from_model import ProbabilityPredictor
 except ImportError as e:
     print(f"❌ 필수 모듈 로딩 실패: {e}")
     exit(1)
@@ -48,31 +48,31 @@ def parsenumber(value: Any) -> Optional[float]:
 
 
 # ==========================================
-# 1. TFT 모델 로드 (절대 경로 체크 및 초기화 로직)
+# 1. Transformer 모델 로드 (절대 경로 체크 및 초기화 로직)
 # ==========================================
 BASE_DIR = Path(__file__).parent.absolute()
-TFT_MODEL_PATH = BASE_DIR / 'results_transformer' / 'best_model.pt'
+MODEL_PATH = BASE_DIR / 'results_transformer' / 'best_model.pt'
 
 print("=" * 60)
 print("🔍 Transformer 모델 초기화 시작")
 print(f"   작업 디렉토리: {os.getcwd()}")
 print(f"   BASE_DIR: {BASE_DIR}")
-print(f"   모델 경로: {TFT_MODEL_PATH}")
-print(f"   파일 존재 여부: {TFT_MODEL_PATH.exists()}")
+print(f"   모델 경로: {MODEL_PATH}")
+print(f"   파일 존재 여부: {MODEL_PATH.exists()}")
 print("=" * 60)
 
 # 모델 파일 존재 확인
-if not TFT_MODEL_PATH.exists():
+if not MODEL_PATH.exists():
     print(f"❌ 모델 파일을 찾을 수 없습니다!")
-    print(f"   경로: {TFT_MODEL_PATH}")
+    print(f"   경로: {MODEL_PATH}")
     print(f"   현재 디렉토리: {os.getcwd()}")
     print(f"   해결: 올바른 디렉토리에서 서버를 실행하거나 모델 파일 경로를 확인하세요.")
-    raise FileNotFoundError(f"모델 파일을 찾을 수 없습니다: {TFT_MODEL_PATH}")
+    raise FileNotFoundError(f"모델 파일을 찾을 수 없습니다: {MODEL_PATH}")
 
 # 모델 로드
 try:
     print("📦 Transformer 모델 로딩 중...")
-    tft_predictor = ProbabilityPredictor(model_path=str(TFT_MODEL_PATH))
+    tft_predictor = ProbabilityPredictor(model_path=str(MODEL_PATH))
     print("✅ Transformer 모델 로드 성공!")
 except Exception as e:
     print(f"❌ 모델 로드 실패! 에러: {e}")
@@ -82,23 +82,23 @@ except Exception as e:
 
 
 # ==========================================
-# 2. TFT 예측 어댑터 (top_ranges 지원)
+# 2. Transformer 예측 어댑터 (top_ranges 지원)
 # ==========================================
 class TFTPredictorAdapter:
-    """RAG 파이프라인에서 사용할 TFT 모델 어댑터 - top_ranges 지원"""
+    """RAG 파이프라인에서 사용할 Transformer 모델 어댑터 - top_ranges 지원"""
 
     def __init__(self, predictor):
         self.predictor = predictor
 
     def predict(self, requirements: Dict[str, Any], retrieved_context: str = "") -> Dict[str, Any]:
-        """입찰 요구사항을 기반으로 TFT 모델로 예측 수행 - top_ranges 포함"""
+        """입찰 요구사항을 기반으로 Transformer 모델로 예측 수행 - top_ranges 포함"""
         try:
             if not self.predictor:
                 return {
                     "error": "Model not loaded",
                     "point_estimate": 0,
                     "confidence": "error",
-                    "rationale": "TFT Model not loaded"
+                    "rationale": "Transformer Model not loaded"
                 }
 
             # 입력 데이터 파싱
@@ -107,17 +107,18 @@ class TFTPredictorAdapter:
             estimate = parsenumber(requirements.get('estimate_price')) or 0.0
             budget = parsenumber(requirements.get('budget')) or 0.0
 
+            # ✅ 입력 형식 변경: 순서 + 백분율
             input_dict = {
-                '예가범위': pr_range,
-                '낙찰하한율': lower_rate,
+                '기초금액': budget,
                 '추정가격': estimate,
-                '기초금액': budget
+                '예가범위': pr_range,        # 이미 백분율 (3.5, not 0.035)
+                '낙찰하한율': lower_rate      # 이미 백분율 (87.74, not 0.8774)
             }
 
-            # TFT 모델로 확률 높은 상위 3개 구간 예측
+            # Transformer 모델로 확률 높은 상위 3개 구간 예측
             result = self.predictor.get_highest_probability_ranges(
                 input_dict,
-                bin_width=0.001,
+                bin_width=100000,  # ✅ 원 단위 (10만원)
                 top_k=3
             )
 
@@ -125,12 +126,12 @@ class TFTPredictorAdapter:
                 top_ranges = result["top_ranges"]
                 return {
                     "currency": "KRW",
-                    "point_estimate": int(top_ranges[0]["center"]),  # 가장 확률 높은 구간의 중심값
-                    "predicted_min": int(result["statistics"]["q25"]),  # 25% 분위수
-                    "predicted_max": int(result["statistics"]["q75"]),  # 75% 분위수
+                    "point_estimate": int(top_ranges[0]["center"]),
+                    "predicted_min": int(result["statistics"]["q25"]),
+                    "predicted_max": int(result["statistics"]["q75"]),
                     "confidence": "high",
-                    "top_ranges": top_ranges,  # ✅ 상위 확률 구간들
-                    "statistics": result["statistics"],  # 추가 통계 정보
+                    "top_ranges": top_ranges,
+                    "statistics": result["statistics"],
                     "rationale": f"Transformer Model - Top {len(top_ranges)} 확률 구간 분석 완료",
                     "model_type": "QuantileTransformerRegressor"
                 }
@@ -248,7 +249,7 @@ def generate_pdf(report_text, output_path):
 
 @app.post("/analyze")
 async def analyze(req: Dict[str, Any]):
-    """입찰공고 분석 + TFT 예측 + PDF 생성 + Azure 업로드"""
+    """입찰공고 분석 + Transformer 예측 + PDF 생성 + Azure 업로드"""
     try:
         # 1. RAG 파이프라인 분석 수행
         result = rag_pipeline.analyze(
@@ -318,21 +319,22 @@ async def predict_base(req: Dict[str, List[float]]):
     try:
         features = req.get("features", [])
         if len(features) != 4:
-            return {"error": "4개의 feature가 필요합니다 (예가범위, 낙찰하한율, 추정가격, 기초금액)", "predBid": 0}
+            return {"error": "4개의 feature가 필요합니다 (예가범위%, 낙찰하한율%, 추정가격, 기초금액)", "predBid": 0}
 
+        # ✅ 입력 형식 변경: 순서 + 백분율
         input_dict = {
-            '예가범위': features[0],
-            '낙찰하한율': features[1],
+            '기초금액': features[3],
             '추정가격': features[2],
-            '기초금액': features[3]
+            '예가범위': features[0],      # 백분율 그대로 (3.5, not 0.035)
+            '낙찰하한율': features[1]      # 백분율 그대로 (87.74, not 0.8774)
         }
 
-        result = tft_predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=3)
+        result = tft_predictor.get_highest_probability_ranges(input_dict, bin_width=100000, top_k=3)
 
         if result and result.get("top_ranges"):
             top_ranges = result["top_ranges"]
             return {
-                "predBid": top_ranges[0]["center"],
+                "predBid": int(top_ranges[0]["center"]),
                 "top_ranges": top_ranges,
                 "statistics": result["statistics"]
             }
@@ -353,7 +355,7 @@ def root():
         "status": "running",
         "model": "Quantile Transformer (4-features)",
         "features": ["top_ranges", "PDF generation", "Azure upload"],
-        "model_path": str(TFT_MODEL_PATH)
+        "model_path": str(MODEL_PATH)
     }
 
 

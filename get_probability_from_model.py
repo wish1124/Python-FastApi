@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import os
+import json  # ← 추가!
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -50,9 +51,20 @@ class ProbabilityPredictor:
         self.model_path = model_path
         self.device = device
         self.quantiles = np.linspace(0.001, 0.999, 999)
-        self.feature_names = ['예가범위', '낙찰하한율', '추정가격', '기초금액']
+        self.feature_names = ['기초금액', '추정가격', '예가범위', '낙찰하한율']  # ← 순서 변경!
         self.model = self._load_model()
-        self.scaler = None
+        self.scaler = self._load_scaler()  # ← 스케일러 로드 추가!
+
+    def _load_scaler(self):
+        """scalers.json 파일 로드"""
+        scaler_path = self.model_path.replace('best_model.pt', 'scalers.json')
+        if os.path.exists(scaler_path):
+            with open(scaler_path, 'r') as f:
+                scaler = json.load(f)
+                print(f"✓ 스케일러 로드 완료: {scaler_path}")
+                return scaler
+        print(f"⚠️  스케일러 파일 없음: {scaler_path}")
+        return None
 
     def _load_model(self):
         """학습된 모델 로드"""
@@ -90,37 +102,60 @@ class ProbabilityPredictor:
         return model
 
     def _prepare_input(self, input_features):
-        """입력 피처를 numpy array로 변환"""
+        """입력 피처를 numpy array로 변환 및 스케일링"""
         if isinstance(input_features, dict):
+            # ✅ 순서: 기초금액, 추정가격, 예가범위(%), 낙찰하한율(%)
             X = np.array([[
-                input_features['예가범위'],
-                input_features['낙찰하한율'],
+                input_features['기초금액'],
                 input_features['추정가격'],
-                input_features['기초금액']
+                input_features['예가범위'],  # 0-100 스케일 (3.5, not 0.035)
+                input_features['낙찰하한율']  # 0-100 스케일 (87.74, not 0.8774)
             ]], dtype=np.float32)
         else:
             X = np.array([input_features], dtype=np.float32)
             if X.shape[1] != 4:
                 raise ValueError(f"입력 피처는 4개여야 합니다. 현재: {X.shape[1]}개")
 
+        # ✅ 스케일링 적용
         if self.scaler is not None:
-            X = self.scaler.transform(X)
+            x_mean = np.array(self.scaler['x_mean'], dtype=np.float32)
+            x_std = np.array(self.scaler['x_std'], dtype=np.float32)
+            X = (X - x_mean) / x_std
 
         return X
 
     def _predict_quantiles(self, X):
-        """999개 quantile 예측"""
+        """999개 quantile 예측 및 역변환"""
         with torch.no_grad():
             X_tensor = torch.FloatTensor(X).to(self.device)
-            return self.model(X_tensor).cpu().numpy()[0]
+            pred = self.model(X_tensor).cpu().numpy()[0]  # 표준화된 로그 값
+
+            # ✅ 역변환 (역표준화 + 역로그)
+            if self.scaler is not None:
+                y_mean = self.scaler['y_mean']
+                y_std = self.scaler['y_std']
+                target_log = self.scaler.get('target_log', False)
+
+                # 역표준화: (pred * std) + mean
+                pred = pred * y_std + y_mean
+
+                # 역로그 변환: exp(pred)
+                if target_log:
+                    pred = np.exp(pred)
+
+            return pred
 
     def _get_input_features_dict(self, X):
         """입력 피처를 dict 형태로 반환"""
         return {
-            '예가범위': float(X[0, 0]),
-            '낙찰하한율': float(X[0, 1]),
-            '추정가격': float(X[0, 2]),
-            '기초금액': float(X[0, 3])
+            '기초금액': float(X[0, 0]) if self.scaler is None else float(
+                X[0, 0] * self.scaler['x_std'][0] + self.scaler['x_mean'][0]),
+            '추정가격': float(X[0, 1]) if self.scaler is None else float(
+                X[0, 1] * self.scaler['x_std'][1] + self.scaler['x_mean'][1]),
+            '예가범위': float(X[0, 2]) if self.scaler is None else float(
+                X[0, 2] * self.scaler['x_std'][2] + self.scaler['x_mean'][2]),
+            '낙찰하한율': float(X[0, 3]) if self.scaler is None else float(
+                X[0, 3] * self.scaler['x_std'][3] + self.scaler['x_mean'][3])
         }
 
     def predict_probability(self, input_features, lower_bound, upper_bound):
@@ -258,7 +293,7 @@ class ProbabilityPredictor:
             probability = avg_pdf * bin_width
 
             bin_info.append({
-                'range': f'{(lower - 1) * 100:+.1f}% ~ {(upper - 1) * 100:+.1f}%',  # 증감으로 표시, 0.1%p 단위, ~ 앞뒤 공백
+                'range': f'{lower:.0f}원 ~ {upper:.0f}원',
                 'lower': float(lower),
                 'upper': float(upper),
                 'center': float((lower + upper) / 2),
@@ -276,9 +311,6 @@ class ProbabilityPredictor:
                 old_prob = b['probability']
                 b['probability'] = b['probability'] / total_probability
                 b['probability_percent'] = b['probability'] * 100
-                if old_prob > 1.0:  # 100% 초과한 구간만 출력
-                    print(
-                        f"[DEBUG] 구간 [{b['lower']:.2f}, {b['upper']:.2f}]: {old_prob * 100:.2f}% → {b['probability_percent']:.2f}%")
 
         # PDF 기준으로 정렬 (확률밀도가 높은 순)
         sorted_bins = sorted(bin_info, key=lambda x: x['pdf'], reverse=True)
@@ -359,14 +391,14 @@ def main():
     print("TFT 4-Feature 모델 - 가장 확률이 높은 구간 예측")
     print("=" * 80)
 
-    predictor = ProbabilityPredictor(model_path='./results_tft_4feat/best_model.pt')
+    predictor = ProbabilityPredictor(model_path='./results_transformer/best_model.pt')
 
-    # 예시 입력값
+    # ✅ 예시 입력값 (백분율 스케일!)
     input_dict = {
-        '예가범위': 0.02,
-        '낙찰하한율': 0.9,
-        '추정가격': 53643620,
-        '기초금액': 48279258
+        '기초금액': 50000000,
+        '추정가격': 45000000,
+        '예가범위': 3.5,  # ← 3.5% (not 0.035)
+        '낙찰하한율': 87.74  # ← 87.74% (not 0.8774)
     }
 
     print(f"\n입력 피처:")
@@ -374,19 +406,17 @@ def main():
         print(f"  {key}: {value}")
 
     # 확률이 높은 상위 5개 구간
-    result = predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=5)
+    result = predictor.get_highest_probability_ranges(input_dict, bin_width=100000, top_k=5)
 
     print("\n" + "=" * 80)
-    print(f"모델 예측 범위: {result['prediction_range']['min'] * 100:.2f}% ~ {result['prediction_range']['max'] * 100:.2f}%")
-    print(f"중앙값: {result['statistics']['median'] * 100:.2f}%")
-    print(f"평균: {result['statistics']['mean'] * 100:.2f}%")
+    print(f"모델 예측 범위: {result['prediction_range']['min']:.0f}원 ~ {result['prediction_range']['max']:.0f}원")
+    print(f"중앙값: {result['statistics']['median']:.0f}원")
+    print(f"평균: {result['statistics']['mean']:.0f}원")
     print("=" * 80)
 
-    print("\n 사정률에 대한 구간별 확률")
-    print(f"\n✨ 확률이 높은 상위 5개 구간:")
+    print("\n✨ 확률이 높은 상위 5개 구간:")
     for i, r in enumerate(result['top_ranges'], 1):
-        print(
-            f"  {i}위. {r['range']} = 사정율 {r['lower'] * 100:.1f}%~{r['upper'] * 100:.1f}% (확률: {r['probability_percent']:.2f}%)")
+        print(f"  {i}위. {r['range']} (확률: {r['probability_percent']:.2f}%)")
 
 
 if __name__ == "__main__":

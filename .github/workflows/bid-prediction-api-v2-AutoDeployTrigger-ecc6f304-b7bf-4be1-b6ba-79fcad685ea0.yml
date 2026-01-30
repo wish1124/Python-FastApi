@@ -35,15 +35,10 @@ jobs:
         uses: azure/container-apps-deploy-action@v2
         with:
           appSourcePath: ${{ github.workspace }}
-          _dockerfilePathKey_: _dockerfilePath_
-          _targetLabelKey_: _targetLabel_
+          dockerfilePath: Dockerfile  # ✅ 이 줄로 교체!
           registryUrl: ragserverreg01.azurecr.io
           registryUsername: ${{ secrets.BIDPREDICTIONAPIV2_REGISTRY_USERNAME }}
           registryPassword: ${{ secrets.BIDPREDICTIONAPIV2_REGISTRY_PASSWORD }}
           containerAppName: bid-prediction-api-v2
           resourceGroup: BidPrediction-RG
           imageToBuild: ragserverreg01.azurecr.io/bid-prediction-api-v2:${{ github.sha }}
-          _buildArgumentsKey_: |
-            _buildArgumentsValues_
-
-

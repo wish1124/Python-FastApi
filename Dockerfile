@@ -27,3 +27,5 @@ EXPOSE 9999
 
 # 6. [매우 중요] CMD는 반드시 파일의 맨 마지막에 딱 한 번만 와야 합니다!
 CMD ["python", "RAG_server.py"]
+
+## 수정

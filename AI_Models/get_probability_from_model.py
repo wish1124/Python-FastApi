@@ -299,7 +299,7 @@ class ProbabilityPredictor:
             'input_features': result['input_features']
         }
     
-    def get_mode_and_peak_density(self, input_features, bandwidth=0.5):
+    def get_mode_and_peak_density(self, input_features, bandwidth=0.001):
         """최빈값(mode)과 peak 밀도 분석"""
         X = self._prepare_input(input_features)
         pred_quantiles = self._predict_quantiles(X)
@@ -354,7 +354,7 @@ def main():
         print(f"  {key}: {value}")
     
     # 확률이 높은 상위 5개 구간
-    result = predictor.get_highest_probability_ranges(input_dict, bin_width=0.01, top_k=5)
+    result = predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=5)
     
     print("\n" + "=" * 80)
     print(f"모델 예측 범위: {result['prediction_range']['min']*100:.2f}% ~ {result['prediction_range']['max']*100:.2f}%")

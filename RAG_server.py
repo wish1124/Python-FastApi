@@ -51,8 +51,7 @@ def parsenumber(value: Any) -> Optional[float]:
 # 1. TFT 모델 로드 (절대 경로 체크 및 초기화 로직)
 # ==========================================
 BASE_DIR = Path(__file__).parent.absolute()
-TFT_MODEL_PATH = BASE_DIR / 'results_tft_4feat' / 'best_model.pt'
-
+TFT_MODEL_PATH = BASE_DIR / 'results_transformer' / 'best_model.pt'
 print("=" * 60)
 print("🔍 TFT 모델 초기화 시작")
 print(f"   작업 디렉토리: {os.getcwd()}")

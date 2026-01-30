@@ -24,7 +24,7 @@ df = pd.read_csv("../dataset/dataset_feature_selected.csv")
 
 # 2. 4개 핵심 피처만 선택
 print("4개 핵심 피처만 선택 중...")
-selected_features = ['안전관리비비율', '안전관리비_적용여부', '추정가격', '기초금액']
+selected_features = ['예가범위', '낙찰하한율', '추정가격', '기초금액']
 target_col = '사정율'
 
 # 필요한 컬럼들이 존재하는지 확인

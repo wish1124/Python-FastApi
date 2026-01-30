@@ -135,7 +135,7 @@ print("🚀 RAG 파이프라인 초기화...")
 rag_pipeline = BidRAGPipeline(
     doc_dir="./rag_corpus",
     index_dir="./rag_index",
-    award_predict_fn=adapter.predict  # ✅ TFT 어댑터 주입
+    award_predictor_instance=adapter # ✅ TFT 어댑터 주입
 )
 
 # ==========================================

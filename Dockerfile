@@ -19,7 +19,7 @@ COPY . .
 
 # 4. [핵심] 모델 폴더 명시적 복사 (보험용)
 # .dockerignore에 걸려있더라도 이 명령어가 아래에 있으면 강제로 덮어씌워 복사합니다.
-COPY results_tft_4feat/ /app/results_tft_4feat/
+COPY results_transformer/ /app/results_transformer/
 
 # 5. 환경 변수 설정
 ENV PYTHONUNBUFFERED=1

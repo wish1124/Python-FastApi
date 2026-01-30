@@ -51,28 +51,34 @@ def parsenumber(value: Any) -> Optional[float]:
 # 1. TFT 모델 로드 (절대 경로 체크 및 초기화 로직)
 # ==========================================
 BASE_DIR = Path(__file__).parent.absolute()
-TFT_MODEL_PATH = BASE_DIR / 'results_transformer' / 'best_model.pt'
+TFT_MODEL_PATH = BASE_DIR / 'results_transformer_4feat' / 'transformer_4feat.pt'
+
 print("=" * 60)
-print("🔍 TFT 모델 초기화 시작")
+print("🔍 Transformer 모델 초기화 시작")
 print(f"   작업 디렉토리: {os.getcwd()}")
 print(f"   BASE_DIR: {BASE_DIR}")
 print(f"   모델 경로: {TFT_MODEL_PATH}")
 print(f"   파일 존재 여부: {TFT_MODEL_PATH.exists()}")
 print("=" * 60)
 
-tft_predictor = None
-
+# 모델 파일 존재 확인
 if not TFT_MODEL_PATH.exists():
-    print(f"❌ TFT 모델 파일을 찾을 수 없습니다! 경로를 확인하세요: {TFT_MODEL_PATH}")
-else:
-    try:
-        print("📦 TFT 모델 로딩 중...")
-        tft_predictor = ProbabilityPredictor(model_path=str(TFT_MODEL_PATH))
-        print("✅ TFT 모델 로드 성공!")
-    except Exception as e:
-        print(f"❌ TFT 모델 로드 실패! 에러: {e}")
-        import traceback
-        traceback.print_exc()
+    print(f"❌ 모델 파일을 찾을 수 없습니다!")
+    print(f"   경로: {TFT_MODEL_PATH}")
+    print(f"   현재 디렉토리: {os.getcwd()}")
+    print(f"   해결: 올바른 디렉토리에서 서버를 실행하거나 모델 파일 경로를 확인하세요.")
+    raise FileNotFoundError(f"모델 파일을 찾을 수 없습니다: {TFT_MODEL_PATH}")
+
+# 모델 로드
+try:
+    print("📦 Transformer 모델 로딩 중...")
+    tft_predictor = ProbabilityPredictor(model_path=str(TFT_MODEL_PATH))
+    print("✅ Transformer 모델 로드 성공!")
+except Exception as e:
+    print(f"❌ 모델 로드 실패! 에러: {e}")
+    import traceback
+    traceback.print_exc()
+    raise RuntimeError(f"모델 로드 실패: {e}")
 
 
 # ==========================================
@@ -125,7 +131,7 @@ class TFTPredictorAdapter:
                     "confidence": "high",
                     "top_ranges": top_ranges,  # ✅ 상위 확률 구간들
                     "statistics": result["statistics"],  # 추가 통계 정보
-                    "rationale": f"TFT Model - Top {len(top_ranges)} 확률 구간 분석 완료",
+                    "rationale": f"Transformer Model - Top {len(top_ranges)} 확률 구간 분석 완료",
                     "model_type": "QuantileTransformerRegressor"
                 }
             else:
@@ -133,11 +139,13 @@ class TFTPredictorAdapter:
                     "error": "Prediction failed",
                     "point_estimate": 0,
                     "confidence": "low",
-                    "rationale": "TFT 예측 결과 없음"
+                    "rationale": "예측 결과 없음"
                 }
 
         except Exception as e:
-            print(f"❌ TFT 예측 오류: {e}")
+            print(f"❌ 예측 오류: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 "error": str(e),
                 "point_estimate": 0,
@@ -146,14 +154,33 @@ class TFTPredictorAdapter:
             }
 
 
+# ==========================================
 # 어댑터 및 파이프라인 생성
-adapter = TFTPredictorAdapter(tft_predictor)
-print("🚀 RAG 파이프라인 초기화...")
-rag_pipeline = BidRAGPipeline(
-    doc_dir="./rag_corpus",
-    index_dir="./rag_index",
-    award_predict_fn=adapter.predict # ✅ 인자명을 award_predict_fn으로 유지
-)
+# ==========================================
+
+# Adapter 생성
+try:
+    print("🔧 TFTPredictorAdapter 초기화 중...")
+    adapter = TFTPredictorAdapter(tft_predictor)
+    print("✅ Adapter 초기화 완료!")
+except Exception as e:
+    print(f"❌ Adapter 초기화 실패: {e}")
+    raise RuntimeError(f"Adapter 초기화 실패: {e}")
+
+# RAG 파이프라인 초기화
+try:
+    print("🚀 RAG 파이프라인 초기화 중...")
+    rag_pipeline = BidRAGPipeline(
+        doc_dir="./rag_corpus",
+        index_dir="./rag_index",
+        award_predictor_instance=adapter  # ✅ 객체 자체를 주입!
+    )
+    print("✅ RAG 파이프라인 초기화 완료!")
+except Exception as e:
+    print(f"❌ RAG 파이프라인 초기화 실패: {e}")
+    import traceback
+    traceback.print_exc()
+    raise RuntimeError(f"RAG 파이프라인 초기화 실패: {e}")
 
 print("=" * 60)
 print("🎉 모든 초기화 완료! 서버 시작 준비됨")
@@ -163,7 +190,7 @@ print("=" * 60)
 # ==========================================
 # 3. FastAPI 서버 및 PDF 생성 로직
 # ==========================================
-app = FastAPI(title="Integrated Bid Prediction API with TFT")
+app = FastAPI(title="Integrated Bid Prediction API with Transformer")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # --- Azure Blob Storage 설정 ---
@@ -276,6 +303,8 @@ async def analyze(req: Dict[str, Any]):
 
     except Exception as e:
         print(f"❌ /analyze 오류: {e}")
+        import traceback
+        traceback.print_exc()
         return {
             "status": "error",
             "message": f"분석 도중 서버 에러가 발생했습니다: {str(e)}",
@@ -285,14 +314,11 @@ async def analyze(req: Dict[str, Any]):
 
 @app.post("/predictBase")
 async def predict_base(req: Dict[str, List[float]]):
-    """직접 예측 API (TFT 모델)"""
-    if not tft_predictor:
-        return {"error": "TFT Model not loaded", "predBid": 0}
-
+    """직접 예측 API (Transformer 모델)"""
     try:
         features = req.get("features", [])
         if len(features) != 4:
-            return {"error": "4개의 feature가 필요합니다", "predBid": 0}
+            return {"error": "4개의 feature가 필요합니다 (예가범위, 낙찰하한율, 추정가격, 기초금액)", "predBid": 0}
 
         input_dict = {
             '예가범위': features[0],
@@ -314,6 +340,9 @@ async def predict_base(req: Dict[str, List[float]]):
             return {"error": "예측 실패", "predBid": 0}
 
     except Exception as e:
+        print(f"❌ /predictBase 오류: {e}")
+        import traceback
+        traceback.print_exc()
         return {"error": str(e), "predBid": 0}
 
 
@@ -322,8 +351,9 @@ def root():
     """서버 상태 확인"""
     return {
         "status": "running",
-        "model": "TFT (Quantile Transformer)",
-        "features": ["top_ranges", "PDF generation", "Azure upload"]
+        "model": "Quantile Transformer (4-features)",
+        "features": ["top_ranges", "PDF generation", "Azure upload"],
+        "model_path": str(TFT_MODEL_PATH)
     }
 
 

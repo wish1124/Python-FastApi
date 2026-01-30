@@ -326,6 +326,76 @@ class CallableAwardPricePredictor(AwardPricePredictor):
             "model": self.model_info,
         }
 
+class TFTPredictorWrapper(AwardPricePredictor):
+    """
+    TFT 모델 전용 래퍼 - top_ranges를 명시적으로 저장하고 관리
+
+    RAG_server.py의 TFTPredictorAdapter 객체를 받아서 래핑합니다.
+    예측 결과의 top_ranges를 내부에 저장하여 접근 가능하게 합니다.
+    """
+
+    def __init__(self, adapter):
+        """
+        Args:
+            adapter: TFTPredictorAdapter 인스턴스
+        """
+        self.adapter = adapter
+        self.top_ranges = None  # 마지막 예측의 top_ranges 저장
+        self.last_prediction = None  # 전체 예측 결과 저장
+
+    def predict(self, requirements: Dict[str, Any], retrieved_context: str) -> Dict[str, Any]:
+        """
+        TFT 모델로 예측 수행 및 결과 저장
+
+        Returns:
+            Dict containing:
+                - point_estimate: 가장 확률 높은 예측값
+                - top_ranges: 확률 높은 상위 구간들 (List)
+                - statistics: 통계 정보 (mean, median, q25, q75 등)
+                - confidence, rationale, model_type 등
+        """
+        try:
+            # TFTPredictorAdapter의 predict() 호출
+            result = self.adapter.predict(requirements, retrieved_context)
+
+            # 결과 저장
+            self.last_prediction = result
+
+            # top_ranges 명시적 저장
+            if isinstance(result, dict) and "top_ranges" in result:
+                self.top_ranges = result["top_ranges"]
+                print(f"✅ TFT 예측 완료 - top_ranges 저장: {len(self.top_ranges)}개 구간")
+                print(f"   최고 확률 구간 중심값: {self.top_ranges[0]['center']:,.0f}원")
+            else:
+                self.top_ranges = None
+                print("⚠️ 예측 결과에 top_ranges가 포함되지 않았습니다")
+
+            return result
+
+        except Exception as e:
+            print(f"❌ TFT 예측 오류: {e}")
+            self.last_prediction = None
+            self.top_ranges = None
+
+            return {
+                "currency": "KRW",
+                "point_estimate": 0,
+                "predicted_min": 0,
+                "predicted_max": 0,
+                "confidence": "error",
+                "rationale": f"TFT 모델 예측 중 오류 발생: {str(e)}",
+                "model_type": "TFT (error)",
+                "error": str(e)
+            }
+
+    def get_top_ranges(self) -> Optional[List[Dict[str, Any]]]:
+        """저장된 top_ranges 반환"""
+        return self.top_ranges
+
+    def get_last_prediction(self) -> Optional[Dict[str, Any]]:
+        """마지막 예측 결과 전체 반환"""
+        return self.last_prediction
+
 
 class CNN1DAwardPricePredictor(AwardPricePredictor):
     """Auto-adapter for model_1dcnn.py (1D CNN + scalers + log target)."""
@@ -747,6 +817,7 @@ class BidRAGPipeline:
             award_hidden: int = 64,
             award_dropout: float = 0.1,
             award_predict_fn: Optional[Callable[[Dict[str, Any], str], Any]] = None,  # ★ 외부 함수 주입용
+            award_predictor_instance: Optional[Any] = None,
     ):
         load_api_keys("api_key.txt")
 
@@ -767,6 +838,7 @@ class BidRAGPipeline:
             award_hidden=award_hidden,
             award_dropout=award_dropout,
             award_predict_fn=award_predict_fn,
+            award_predictor_instance=award_predictor_instance,
         )
 
         self.graph = self._build_graph()
@@ -780,7 +852,12 @@ class BidRAGPipeline:
             award_hidden: int,
             award_dropout: float,
             award_predict_fn: Optional[Callable[[Dict[str, Any], str], Any]],
+            award_predictor_instance: Optional[Any] = None,
     ) -> AwardPricePredictor:
+
+        if award_predictor_instance is not None:
+            print("✅ BidRAGPipeline: TFT Adapter 객체로 초기화 (top_ranges 명시적 관리)")
+            return TFTPredictorWrapper(award_predictor_instance)
 
         # ★ [핵심 수정] 외부에서 Transformer 어댑터 같은 함수가 들어오면 바로 리턴!
         if award_predict_fn is not None:
@@ -789,6 +866,7 @@ class BidRAGPipeline:
                 predict_fn=award_predict_fn,
                 model_info={"type": "external_injected", "name": "TransformerAdapter"}
             )
+
 
         # 아래는 기존의 1DCNN 로딩 로직 (award_predict_fn이 없을 때만 실행됨)
         if not award_model_path:

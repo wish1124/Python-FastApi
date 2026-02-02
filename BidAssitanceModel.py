@@ -45,6 +45,10 @@ import json
 import os
 import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypedDict, Annotated
+import zipfile
+import xml.etree.ElementTree as ET
+import zlib
+import olefile
 
 from pydantic import BaseModel, Field
 
@@ -126,70 +130,82 @@ def _load_module_from_py(py_path: str):
 
 
 
+def extract_text_from_hwp(hwp_path: str) -> str:
+    try:
+        f = olefile.OleFileIO(hwp_path)
+        dirs = f.listdir()
+        bodytext_dirs = [d for d in dirs if d[0].startswith('BodyText')]
+        full_text = []
+        for d in bodytext_dirs:
+            section = f.openstream(d).read()
+            try:
+                # HWP V5.0 이상은 zlib 압축을 사용함
+                decompressed = zlib.decompress(section, -15)
+                text = decompressed.decode('utf-16', errors='ignore')
+                full_text.append(text)
+            except:
+                continue
+        return "\n".join(full_text)
+    except Exception as e:
+        print(f"❌ HWP 추출 에러: {e}")
+        return ""
+
+def extract_text_from_hwpx(hwpx_path: str) -> str:
+    try:
+        with zipfile.ZipFile(hwpx_path, 'r') as zf:
+            content_files = [f for f in zf.namelist() if f.startswith('Contents/section') and f.endswith('.xml')]
+            full_text = []
+            for file in content_files:
+                with zf.open(file) as f:
+                    tree = ET.parse(f)
+                    root = tree.getroot()
+                    for t in root.iter():
+                        if t.tag.endswith('t') and t.text:
+                            full_text.append(t.text)
+            return "\n".join(full_text)
+    except Exception as e:
+        print(f"❌ HWPX 추출 에러: {e}")
+        return ""
+
 def extract_text_from_pdf(pdf_path: str) -> str:
-    """Extract text from a PDF file.
-
-    - Primary backend: pypdf (pure python)
-    - Fallback backend: PyMuPDF (fitz)
-
-    If the PDF is scanned (image-only), extracted text may be empty/short.
-    In that case, run OCR upstream and pass the OCR text to this pipeline.
-    """
     if not os.path.exists(pdf_path):
         raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-
     text = ""
-    # Backend 1: pypdf
     try:
-        from pypdf import PdfReader  # type: ignore
+        from pypdf import PdfReader
         reader = PdfReader(pdf_path)
-        parts: List[str] = []
+        parts = []
         for page in reader.pages:
-            try:
-                parts.append(page.extract_text() or "")
-            except Exception:
-                parts.append("")
+            try: parts.append(page.extract_text() or "")
+            except: parts.append("")
         text = "\n\n".join(parts)
-    except Exception:
+    except:
         text = ""
-
-    # Backend 2: PyMuPDF (fallback)
     if len(_clean_whitespace(text)) < 50:
         try:
-            import fitz  # type: ignore
+            import fitz
             doc = fitz.open(pdf_path)
             parts = []
             for page in doc:
-                try:
-                    parts.append(page.get_text("text") or "")
-                except Exception:
-                    parts.append("")
+                try: parts.append(page.get_text("text") or "")
+                except: parts.append("")
             doc.close()
             text = "\n\n".join(parts)
-        except Exception:
+        except:
             pass
-
     text = text.replace("\x00", " ")
-    if len(_clean_whitespace(text)) < 50:
-        try:
-            import sys
-            sys.stderr.write(
-                "[WARN] PDF 텍스트 추출 결과가 매우 짧습니다. 스캔본 PDF일 가능성이 높습니다. "
-                "OCR(예: pytesseract+pdf2image) 적용을 고려하세요.\n"
-            )
-        except Exception:
-            pass
     return text
 
-
 def read_input_text(input_path: str) -> str:
-    """Read bid notice text from .txt or .pdf."""
     ext = os.path.splitext(input_path)[1].lower()
     if ext == ".pdf":
         return extract_text_from_pdf(input_path)
+    elif ext == ".hwp":
+        return extract_text_from_hwp(input_path)
+    elif ext == ".hwpx":
+        return extract_text_from_hwpx(input_path)
     with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
         return f.read()
-
 
 
 def _callable_looks_like_wrapper(fn: Callable[..., Any]) -> bool:

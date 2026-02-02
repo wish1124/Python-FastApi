@@ -22,6 +22,10 @@ langchain-core>=0.1.25
 langgraph>=0.0.26
 openai>=1.10.0
 tiktoken>=0.5.2
+# [3] 텍스트 추출 (핵심!)
+olefile          # HWP 추출을 위해 반드시 추가
+pypdf            # PDF 기본 추출용
+pymupdf          # PDF 보조 추출용(fitz)
 
 # PDF 처리
 pypdf>=4.0.0

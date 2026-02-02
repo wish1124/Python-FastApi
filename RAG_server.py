@@ -51,7 +51,7 @@ def parsenumber(value: Any) -> Optional[float]:
 # 1. Transformer 모델 로드 (절대 경로 체크 및 초기화 로직)
 # ==========================================
 BASE_DIR = Path(__file__).parent.absolute()
-MODEL_PATH = BASE_DIR  / 'results_transformer_4feat' / 'transformer_4feat.pt'
+MODEL_PATH = BASE_DIR / 'results_transformer_4feat' / 'transformer_4feat.pt'
 
 print("=" * 60)
 print("🔍 Transformer 모델 초기화 시작")
@@ -107,12 +107,12 @@ class TFTPredictorAdapter:
             estimate = parsenumber(requirements.get('estimate_price')) or 0.0
             budget = parsenumber(requirements.get('budget')) or 0.0
 
-            # ✅ 입력 형식 변경: 순서 + 백분율
+            # ✅ 입력 형식 변경: 순서 + 백분율 → 비율 변환
             input_dict = {
                 '기초금액': budget,
                 '추정가격': estimate,
-                '예가범위': pr_range,        # 이미 백분율 (3.5, not 0.035)
-                '낙찰하한율': lower_rate      # 이미 백분율 (87.74, not 0.8774)
+                '예가범위': pr_range,            # 백분율 그대로 (3.5)
+                '낙찰하한율': lower_rate / 100    # 백분율 → 비율 (87.74 → 0.8774)
             }
 
             # Transformer 모델로 확률 높은 상위 3개 구간 예측
@@ -321,12 +321,12 @@ async def predict_base(req: Dict[str, List[float]]):
         if len(features) != 4:
             return {"error": "4개의 feature가 필요합니다 (예가범위%, 낙찰하한율%, 추정가격, 기초금액)", "predBid": 0}
 
-        # ✅ 입력 형식 변경: 순서 + 백분율
+        # ✅ 입력 형식 변경: 순서 + 백분율 → 비율 변환
         input_dict = {
             '기초금액': features[3],
             '추정가격': features[2],
-            '예가범위': features[0],      # 백분율 그대로 (3.5, not 0.035)
-            '낙찰하한율': features[1]      # 백분율 그대로 (87.74, not 0.8774)
+            '예가범위': features[0],          # 백분율 그대로 (3.5)
+            '낙찰하한율': features[1] / 100    # 백분율 → 비율 (87.74 → 0.8774)
         }
 
         result = tft_predictor.get_highest_probability_ranges(input_dict, bin_width=100000, top_k=3)

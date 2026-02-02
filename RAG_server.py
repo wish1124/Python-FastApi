@@ -124,7 +124,7 @@ class TFTPredictorAdapter:
             }
 
             # 확률 높은 상위 3개 구간 예측
-            result = self.predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=3)
+            result = self.predictor.get_highest_probability_ranges(input_dict, bin_width=100000, top_k=3)
 
             if result and result.get("top_ranges"):
                 top_ranges = result["top_ranges"]

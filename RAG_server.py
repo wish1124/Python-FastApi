@@ -51,7 +51,7 @@ def parsenumber(value: Any) -> Optional[float]:
 # 1. Transformer 모델 로드 (절대 경로 체크 및 초기화 로직)
 # ==========================================
 BASE_DIR = Path(__file__).parent.absolute()
-MODEL_PATH = BASE_DIR / 'results_transformer' / 'best_model.pt'
+MODEL_PATH = BASE_DIR  / 'results_transformer_4feat' / 'transformer_4feat.pt'
 
 print("=" * 60)
 print("🔍 Transformer 모델 초기화 시작")

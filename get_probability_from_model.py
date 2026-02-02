@@ -57,12 +57,29 @@ class ProbabilityPredictor:
 
     def _load_scaler(self):
         """scalers.json 파일 로드"""
-        scaler_path = self.model_path.replace('best_model.pt', 'scalers.json')
+        import os
+
+        # 모델 파일과 같은 디렉토리에서 scalers.json 찾기
+        model_dir = os.path.dirname(self.model_path)
+        scaler_path = os.path.join(model_dir, 'scalers.json')
+
+        print(f"🔍 스케일러 경로: {scaler_path}")  # 디버그
+        print(f"   파일 존재? {os.path.exists(scaler_path)}")
+
         if os.path.exists(scaler_path):
-            with open(scaler_path, 'r') as f:
-                scaler = json.load(f)
-                print(f"✓ 스케일러 로드 완료: {scaler_path}")
-                return scaler
+            try:
+                with open(scaler_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    print(f"   파일 내용 길이: {len(content)}")  # 디버그
+                    if not content.strip():
+                        print("⚠️  파일이 비어있음!")
+                        return None
+                    scaler = json.loads(content)
+                    print(f"✓ 스케일러 로드 완료: {scaler_path}")
+                    return scaler
+            except Exception as e:
+                print(f"⚠️  스케일러 로드 에러: {e}")
+                return None
         print(f"⚠️  스케일러 파일 없음: {scaler_path}")
         return None
 
@@ -141,7 +158,7 @@ class ProbabilityPredictor:
 
                 # 역로그 변환: exp(pred)
                 if target_log:
-                    pred = np.exp(pred)
+                    pred = np.expm1(pred)
 
             return pred
 

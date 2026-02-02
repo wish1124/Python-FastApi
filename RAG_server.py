@@ -130,9 +130,9 @@ class TFTPredictorAdapter:
                 top_ranges = result["top_ranges"]
                 return {
                     "currency": "KRW",
-                    "point_estimate": int(top_ranges[0]["center"]),
-                    "predicted_min": int(result["statistics"]["q25"]),
-                    "predicted_max": int(result["statistics"]["q75"]),
+                    "point_estimate": float(top_ranges[0]["center"]),
+                    "predicted_min": float(result["statistics"]["q25"]),
+                    "predicted_max": float(result["statistics"]["q75"]),
                     "confidence": "high",
                     "top_ranges": top_ranges,
                     "statistics": result["statistics"],
@@ -210,7 +210,7 @@ async def predict_base(req: PredictReq):
 
         result = tft_predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=3)  # 비율 단위
         return {
-            "predBid": int(result["top_ranges"][0]["center"]),
+            "predBid": float(result["top_ranges"][0]["center"]),
             "top_ranges": result["top_ranges"],
             "statistics": result["statistics"]
         }

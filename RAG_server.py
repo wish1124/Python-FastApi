@@ -137,10 +137,21 @@ async def analyze_bid(req: AnalyzeReq):
 
 
 if __name__ == "__main__":
-    # ngrok 토큰 설정 및 실행
+    # ngrok 설정
     NGROK_TOKEN = "38H6WIHF5Hn1xV68lPnXu15Tutc_4PDGKRtxpJhbJuVdcUCEp"
     ngrok.set_auth_token(NGROK_TOKEN)
-    print(f"🌍 Public URL: {ngrok.connect(9999).public_url}")
+
+    # [수정] 기존에 열려있는 모든 터널을 닫아서 중복 에러 방지
+    tunnels = ngrok.get_tunnels()
+    for t in tunnels:
+        ngrok.disconnect(t.public_url)
+
+    try:
+        # 새로 연결 시도
+        url = ngrok.connect(9999).public_url
+        print(f"🌍 Public URL: {url}")
+    except Exception as e:
+        print(f"⚠️ ngrok 연결 실패 (로컬 접속만 가능): {e}")
 
     nest_asyncio.apply()
     uvicorn.run(app, host="0.0.0.0", port=9999)

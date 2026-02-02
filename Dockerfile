@@ -18,9 +18,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # 3. 프로젝트 전체 소스 코드 복사
 COPY . .
 
-# 4. [핵심 수정] 모델 폴더 및 폰트 파일 확인
-# 최신 코드 경로인 results_transformer로 변경
-COPY results_transformer/ /app/results_transformer/
+# 4. [핵심 수정] 모델 폴더 변경: results_transformer_4feat 사용
+COPY results_transformer_4feat/ /app/results_transformer_4feat/
+
 # 한글 폰트 파일 복사 확인
 COPY NanumGothic-Regular.ttf /app/NanumGothic-Regular.ttf
 

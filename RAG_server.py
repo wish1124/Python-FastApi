@@ -115,16 +115,16 @@ class TFTPredictorAdapter:
             if not self.predictor:
                 return {"error": "Model not loaded", "confidence": "error"}
 
-            # 데이터 정규화
+            # ✅ 수정 1: 순서 변경 + 낙찰하한율 백분율 → 비율 변환
             input_dict = {
-                '예가범위': parsenumber(requirements.get('expected_price_range')) or 0.0,
-                '낙찰하한율': parsenumber(requirements.get('award_lower_rate')) or 0.0,
+                '기초금액': parsenumber(requirements.get('budget')) or 0.0,
                 '추정가격': parsenumber(requirements.get('estimate_price')) or 0.0,
-                '기초금액': parsenumber(requirements.get('budget')) or 0.0
+                '예가범위': parsenumber(requirements.get('expected_price_range')) or 0.0,
+                '낙찰하한율': (parsenumber(requirements.get('award_lower_rate')) or 0.0) / 100  # 백분율 → 비율
             }
 
-            # 확률 높은 상위 3개 구간 예측
-            result = self.predictor.get_highest_probability_ranges(input_dict, bin_width=100000, top_k=3)
+            # ✅ 확률 높은 상위 3개 구간 예측 - bin_width를 비율 단위로 수정
+            result = self.predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=3)
 
             if result and result.get("top_ranges"):
                 top_ranges = result["top_ranges"]
@@ -200,14 +200,15 @@ async def predict_base(req: PredictReq):
         if len(req.features) != 4:
             return {"error": "4개의 피처가 필요합니다. [예가, 하한율, 추정가, 기초가]", "predBid": 0}
 
+        # ✅ 수정 2: 순서 변경 + 낙찰하한율 백분율 → 비율 변환 + bin_width를 비율 단위로 수정
         input_dict = {
-            '예가범위': req.features[0],
-            '낙찰하한율': req.features[1],
+            '기초금액': req.features[3],
             '추정가격': req.features[2],
-            '기초금액': req.features[3]
+            '예가범위': req.features[0],
+            '낙찰하한율': req.features[1] / 100  # 백분율 → 비율
         }
 
-        result = tft_predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=3)
+        result = tft_predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=3)  # 비율 단위
         return {
             "predBid": int(result["top_ranges"][0]["center"]),
             "top_ranges": result["top_ranges"],

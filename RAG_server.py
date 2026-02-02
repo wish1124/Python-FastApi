@@ -121,7 +121,7 @@ class TFTPredictorAdapter:
                 '기초금액': parsenumber(requirements.get('budget')) or 0.0,
                 '추정가격': parsenumber(requirements.get('estimate_price')) or 0.0,
                 '예가범위': parsenumber(requirements.get('expected_price_range')) or 0.0,
-                '낙찰하한율': (parsenumber(requirements.get('award_lower_rate')) or 0.0) / 100  # 백분율 → 비율
+                '낙찰하한율': parsenumber(requirements.get('award_lower_rate')) or 0.0   # 백분율 → 비율
             }
 
             # ✅ 확률 높은 상위 3개 구간 예측 - bin_width를 비율 단위로 수정
@@ -205,7 +205,7 @@ async def predict_base(req: PredictReq):
             '기초금액': req.features[3],
             '추정가격': req.features[2],
             '예가범위': req.features[0],
-            '낙찰하한율': req.features[1] / 100  # 백분율 → 비율
+            '낙찰하한율': req.features[1]   # 백분율 → 비율
         }
 
         result = tft_predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=3)  # 비율 단위

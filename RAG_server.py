@@ -31,7 +31,7 @@ load_dotenv()
 # 실행 파일의 부모 디렉토리를 기준으로 절대 경로 설정
 BASE_DIR = Path(__file__).parent.absolute()
 # 이미지에 명시된 경로 반영: results_transformer/best_model.pt
-TFT_MODEL_PATH = str(BASE_DIR / 'results_transformer' / 'best_model.pt')
+TFT_MODEL_PATH = str(BASE_DIR / 'results_transformer_4feat' / 'best_model.pt')
 
 
 def parsenumber(value: Any) -> Optional[float]:
@@ -124,7 +124,7 @@ class TFTPredictorAdapter:
             }
 
             # ✅ 확률 높은 상위 3개 구간 예측 - bin_width를 비율 단위로 수정
-            result = self.predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=3)
+            result = self.predictor.get_highest_probability_ranges(input_dict, bin_width=100000, top_k=3)
 
             if result and result.get("top_ranges"):
                 top_ranges = result["top_ranges"]
@@ -208,7 +208,7 @@ async def predict_base(req: PredictReq):
             '낙찰하한율': req.features[1] / 100  # 백분율 → 비율
         }
 
-        result = tft_predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=3)  # 비율 단위
+        result = tft_predictor.get_highest_probability_ranges(input_dict, bin_width=100000, top_k=3)  # 비율 단위
         return {
             "predBid": int(result["top_ranges"][0]["center"]),
             "top_ranges": result["top_ranges"],

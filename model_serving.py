@@ -27,7 +27,7 @@ app.add_middleware(
 )
 
 # 1. 파라미터 파일 로드
-pretrainedModelParams = torch.load("../results_transformer/best_model.pt", map_location='cpu')
+pretrainedModelParams = torch.load("../results_transformer_4feat/best_model.pt", map_location='cpu')
 
 # 2. 파라미터 분석을 통한 하이퍼파라미터 역추적
 def infer_hyperparams(state_dict):

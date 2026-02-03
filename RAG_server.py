@@ -100,14 +100,20 @@ class TFTPredictorAdapter:
 
             if result and result.get("top_ranges"):
                 top_ranges = result["top_ranges"]
+
+                # 낙찰가 계산: 사정율 × 낙찰하한율 × 추정가격
+                pred_sashiritsu = float(top_ranges[0]["center"])
+                award_price = round(pred_sashiritsu * lower_rate * estimate) if (lower_rate and estimate) else None
+
                 return {
                     "currency": "KRW",
-                    "point_estimate": float(top_ranges[0]["center"]),  # 가장 확률 높은 구간의 중심값
-                    "predicted_min": float(result["statistics"]["q25"]),  # 25% 분위수
-                    "predicted_max": float(result["statistics"]["q75"]),  # 75% 분위수
+                    "point_estimate": award_price,                      # 원 단위 낙찰가
+                    "predicted_sashiritsu": pred_sashiritsu,            # 사정율 (최고확률)
+                    "predicted_min": float(result["statistics"]["q25"]),  # 사정율 하한 (q25)
+                    "predicted_max": float(result["statistics"]["q75"]),  # 사정율 상한 (q75)
                     "confidence": "high",
-                    "top_ranges": top_ranges,  # ✅ 상위 확률 구간들
-                    "statistics": result["statistics"],  # 추가 통계 정보
+                    "top_ranges": top_ranges,
+                    "statistics": result["statistics"],
                     "rationale": f"TFT Model - Top {len(top_ranges)} 확률 구간 분석 완료",
                     "model_type": "QuantileTransformerRegressor"
                 }
@@ -268,8 +274,21 @@ async def predict_base(req: Dict[str, List[float]]):
 
         if result and result.get("top_ranges"):
             top_ranges = result["top_ranges"]
+            budget = features[3]  # 기초금액
+
+            # 낙찰가 계산: 사정율 × 낙찰하한율 × 추정가격
+            lower_rate = features[1]   # 낙찰하한율
+            estimate = features[2]     # 추정가격
+            pred_sashiritsu = top_ranges[0]["center"]
+            award_price = round(pred_sashiritsu * lower_rate * estimate)
+            award_min = round(result["statistics"]["q25"] * lower_rate * estimate)
+            award_max = round(result["statistics"]["q75"] * lower_rate * estimate)
+
             return {
-                "predBid": top_ranges[0]["center"],
+                "predBid": pred_sashiritsu,                             # 사정율
+                "award_price": award_price,                             # 원 단위 낙찰가
+                "award_min": award_min,                                 # 낙찰가 하한 (q25)
+                "award_max": award_max,                                 # 낙찰가 상한 (q75)
                 "top_ranges": top_ranges,
                 "statistics": result["statistics"]
             }

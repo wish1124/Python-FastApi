@@ -46,7 +46,7 @@ class QuantileTransformerRegressor(nn.Module):
 class ProbabilityPredictor:
     """TFT 4-Feature 모델을 사용한 확률 예측 클래스"""
 
-    def __init__(self, model_path='./results_transformer/best_model.pt'):
+    def __init__(self, model_path='./results_tft_4feat/best_model.pt'):
         self.model_path = model_path
         self.device = device
         self.quantiles = np.linspace(0.001, 0.999, 999)
@@ -65,15 +65,11 @@ class ProbabilityPredictor:
             raise FileNotFoundError(f"모델 파일을 찾을 수 없습니다: {self.model_path}")
 
         checkpoint = torch.load(self.model_path, map_location=self.device)
-        # model_state_dict 키 있으면 사용, 없으면 checkpoint 자체가 state_dict
-        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-        else:
-            model.load_state_dict(checkpoint, strict=False)
+        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         model.eval()
 
         print(f"✓ 모델 로드 완료: {self.model_path}")
-        if isinstance(checkpoint, dict) and 'epoch' in checkpoint:
+        if 'epoch' in checkpoint:
             print(f"  Epoch: {checkpoint['epoch']}, Val Loss: {checkpoint.get('val_loss', 0):.6f}")
 
         return model
@@ -92,8 +88,9 @@ class ProbabilityPredictor:
             if X.shape[1] != 4:
                 raise ValueError(f"입력 피처는 4개여야 합니다. 현재: {X.shape[1]}개")
 
-        if self.scaler is not None:
-            X = self.scaler.transform(X)
+        # 추정가격, 기초금액을 1e8 단위로 정규화
+        X[0, 2] = X[0, 2] / 1e8
+        X[0, 3] = X[0, 3] / 1e8
 
         return X
 
@@ -348,7 +345,7 @@ def main():
     print("TFT 4-Feature 모델 - 가장 확률이 높은 구간 예측")
     print("=" * 80)
 
-    predictor = ProbabilityPredictor(model_path='./results_transformer/best_model.pt')
+    predictor = ProbabilityPredictor(model_path='./results_tft_4feat/best_model.pt')
 
     # 예시 입력값
     input_dict = {

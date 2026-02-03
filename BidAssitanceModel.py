@@ -62,7 +62,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import ToolNode
-from langgraph.graph.message import add_messages 
+from langgraph.graph.message import add_messages
 
 # ------------------------------
 # Utilities
@@ -200,10 +200,6 @@ def read_input_text(input_path: str) -> str:
     ext = os.path.splitext(input_path)[1].lower()
     if ext == ".pdf":
         return extract_text_from_pdf(input_path)
-    elif ext == ".hwp":
-        return extract_text_from_hwp(input_path)
-    elif ext == ".hwpx":
-        return extract_text_from_hwpx(input_path)
     with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
         return f.read()
 
@@ -1021,7 +1017,7 @@ class BidRAGPipeline:
 
         # 노드 등록
         workflow.add_node("extract", self._node_extract)
-        workflow.add_node("predict", self._node_predict)  
+        workflow.add_node("predict", self._node_predict)
         workflow.add_node("report", self._node_report)
 
         # 엣지 연결 (조건문 없이 직렬 연결)
@@ -1267,7 +1263,7 @@ if __name__ == "__main__":
     # 6. 결과 출력 (마크다운 원본도 출력하려면)
     print("\n--- Generated Report (Markdown) ---\n")
     print(markdown_content)
-    
+
     # 7. 백엔드로 전송할 정보 (JSON)
     result_json = {
         "pdf_path": pdf_path,

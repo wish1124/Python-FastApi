@@ -43,4 +43,4 @@ pyngrok
 matplotlib>=3.8.0
 
 # Azure Blob Storage
-azure-storage-blob
+azure-storage-blobolefile>=0.46

@@ -65,13 +65,19 @@ class ProbabilityPredictor:
             raise FileNotFoundError(f"모델 파일을 찾을 수 없습니다: {self.model_path}")
 
         checkpoint = torch.load(self.model_path, map_location=self.device)
-        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+
+        # state_dict가 직접 저장된 경우와 딕셔너리로 저장된 경우 모두 지원
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+            print(f"✓ 모델 로드 완료: {self.model_path}")
+            if 'epoch' in checkpoint:
+                print(f"  Epoch: {checkpoint['epoch']}, Val Loss: {checkpoint.get('val_loss', 0):.6f}")
+        else:
+            # state_dict가 직접 저장된 경우
+            model.load_state_dict(checkpoint, strict=False)
+            print(f"✓ 모델 로드 완료 (direct state_dict): {self.model_path}")
+
         model.eval()
-
-        print(f"✓ 모델 로드 완료: {self.model_path}")
-        if 'epoch' in checkpoint:
-            print(f"  Epoch: {checkpoint['epoch']}, Val Loss: {checkpoint.get('val_loss', 0):.6f}")
-
         return model
 
     def _prepare_input(self, input_features):

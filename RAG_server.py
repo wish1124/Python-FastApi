@@ -49,7 +49,7 @@ def parsenumber(value: Any) -> Optional[float]:
 # ==========================================
 # 1. TFT 모델 로드
 # ==========================================
-TFT_MODEL_PATH = './results_transformer/best_model.pt'
+TFT_MODEL_PATH = "./results_transformer_4feat/best_model.pt"
 try:
     tft_predictor = ProbabilityPredictor(model_path=TFT_MODEL_PATH)
     print("✅ TFT 모델 로드 성공")

@@ -282,7 +282,7 @@ async def predict_base(req: Dict[str, List[float]]):
             pred_sashiritsu = top_ranges[0]["center"]
             award_price = round(pred_sashiritsu * lower_rate * estimate)
             award_min = round(result["statistics"]["q25"] * lower_rate * estimate)
-            award_max = round(result["statistics"]["q75"] * lower_rate * estimate)
+            award_max = round(result["statistics"]["q75"] * lower_rate * estimate) #
 
             return {
                 "predBid": pred_sashiritsu,                             # 사정율

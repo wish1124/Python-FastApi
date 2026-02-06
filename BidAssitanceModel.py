@@ -1136,9 +1136,14 @@ class BidRAGPipeline:
         # 🔧 top_ranges의 사정율 값에 절댓값 적용 (양수로 표시)
         if pred.get("top_ranges"):
             for range_info in pred["top_ranges"]:
-                range_info["center"] = abs(range_info["center"])
-                range_info["start"] = abs(range_info["start"])
-                range_info["end"] = abs(range_info["end"])
+                # center 값은 항상 절댓값 적용
+                if "center" in range_info:
+                    range_info["center"] = abs(range_info["center"])
+                # start, end가 있으면 절댓값 적용
+                if "start" in range_info:
+                    range_info["start"] = abs(range_info["start"])
+                if "end" in range_info:
+                    range_info["end"] = abs(range_info["end"])
 
         # 🔧 statistics의 사정율 값에도 절댓값 적용
         if pred.get("statistics"):

@@ -251,10 +251,22 @@ async def analyze(request: Request):
                 bid_text = str(text_input)
                 print(f"✅ Form 텍스트 입력: {len(bid_text)} 글자")
 
-            # 파일 업로드 확인
-            file = form.get("file")
-            if file and hasattr(file, "filename"):
+            # 파일 업로드 확인 (여러 파일 지원)
+            all_file_texts = []
+
+            # form.getlist()나 여러 키로 파일 가져오기
+            files_to_process = []
+            for key in form.keys():
+                value = form.get(key)
+                # file, file1, file2, files 등 다양한 키 이름 지원
+                if hasattr(value, "filename") and value.filename:
+                    files_to_process.append(value)
+
+            print(f"📦 업로드된 파일 개수: {len(files_to_process)}")
+
+            for file in files_to_process:
                 filename = file.filename.lower()
+                print(f"📄 처리 중: {filename}")
 
                 # 임시 파일로 저장
                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp_file:
@@ -263,32 +275,44 @@ async def analyze(request: Request):
                     tmp_path = tmp_file.name
 
                 try:
+                    extracted_text = ""
+
                     # 확장자에 따라 텍스트 추출
                     if filename.endswith('.hwp'):
-                        print(f"📄 HWP 파일 추출 중: {filename}")
-                        bid_text = extract_text_from_hwp(tmp_path)
+                        print(f"  📄 HWP 파일 추출 중...")
+                        extracted_text = extract_text_from_hwp(tmp_path)
                     elif filename.endswith('.hwpx'):
-                        print(f"📄 HWPX 파일 추출 중: {filename}")
-                        bid_text = extract_text_from_hwpx(tmp_path)
+                        print(f"  📄 HWPX 파일 추출 중...")
+                        extracted_text = extract_text_from_hwpx(tmp_path)
                     elif filename.endswith('.pdf'):
-                        print(f"📄 PDF 파일 추출 중: {filename}")
-                        bid_text = extract_text_from_pdf(tmp_path)
+                        print(f"  📄 PDF 파일 추출 중...")
+                        extracted_text = extract_text_from_pdf(tmp_path)
                     elif filename.endswith('.txt'):
-                        print(f"📄 TXT 파일 읽기 중: {filename}")
+                        print(f"  📄 TXT 파일 읽기 중...")
                         with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            bid_text = f.read()
+                            extracted_text = f.read()
                     else:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"지원하지 않는 파일 형식입니다. (.hwp, .hwpx, .pdf, .txt만 가능)"
-                        )
+                        print(f"  ⚠️ 지원하지 않는 파일 형식: {filename} (건너뜀)")
+                        continue  # 지원하지 않는 파일은 건너뜀
 
-                    print(f"✅ 파일에서 텍스트 추출 완료: {len(bid_text)} 글자")
+                    if extracted_text and len(extracted_text.strip()) > 10:
+                        all_file_texts.append(f"\n\n{'=' * 60}\n파일: {filename}\n{'=' * 60}\n{extracted_text}")
+                        print(f"  ✅ 추출 완료: {len(extracted_text)} 글자")
+                    else:
+                        print(f"  ⚠️ 텍스트 추출 실패 또는 내용 없음")
 
                 finally:
                     # 임시 파일 삭제
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
+
+            # 모든 파일의 텍스트를 합침
+            if all_file_texts:
+                if bid_text:  # 직접 입력한 텍스트가 있으면 맨 앞에
+                    bid_text = bid_text + "\n\n" + "\n\n".join(all_file_texts)
+                else:
+                    bid_text = "\n\n".join(all_file_texts)
+                print(f"✅ 전체 텍스트 통합 완료: {len(bid_text)} 글자 (파일 {len(all_file_texts)}개)")
 
         else:
             print(f"❌ 지원하지 않는 Content-Type: {content_type}")

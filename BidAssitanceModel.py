@@ -1049,7 +1049,11 @@ class BidRAGPipeline:
                 "사용자가 제공한 공고문 텍스트에서 요구사항을 구조화해 추출하라. "
                 "숫자는 가능하면 원 단위 숫자(float/int)로 정규화하고, "
                 "확실하지 않으면 null로 둔다. "
-                "특히 낙찰가 모델 입력을 위해 예가범위(expected_price_range), 낙찰하한율(award_lower_rate)도 추출을 시도하라."
+                "특히 낙찰가 모델 입력을 위해 예가범위(expected_price_range), 낙찰하한율(award_lower_rate)도 추출을 시도하라.\n\n"
+                "중요: 참가자격(qualification_requirements), 실적요건(performance_requirements), "
+                "제출서류(document_requirements)는 공고문에서 반드시 찾아서 리스트로 작성하라. "
+                "예: ['건설업 면허', '최근 3년 실적 1건 이상'], ['입찰참가신청서', '사업자등록증'] 등. "
+                "공고문에 명시되지 않았더라도, 일반적인 입찰 공고의 기본 요건을 추론하여 작성하라."
             )
         )
 
@@ -1129,6 +1133,19 @@ class BidRAGPipeline:
         print("=" * 60)
         # <--- 예측 결과 가져오기
 
+        # 🔧 top_ranges의 사정율 값에 절댓값 적용 (양수로 표시)
+        if pred.get("top_ranges"):
+            for range_info in pred["top_ranges"]:
+                range_info["center"] = abs(range_info["center"])
+                range_info["start"] = abs(range_info["start"])
+                range_info["end"] = abs(range_info["end"])
+
+        # 🔧 statistics의 사정율 값에도 절댓값 적용
+        if pred.get("statistics"):
+            for key in ["mean", "median", "q25", "q75", "min", "max"]:
+                if key in pred["statistics"]:
+                    pred["statistics"][key] = abs(pred["statistics"][key])
+
         reqs_json = json.dumps(reqs, ensure_ascii=False)
         pred_json = json.dumps(pred, ensure_ascii=False)
         messages = state.get("messages", [])
@@ -1141,11 +1158,15 @@ class BidRAGPipeline:
                 "필수 섹션(순서 유지):\n"
                 "# 1. 공고 요약\n"
                 "# 2. 참가자격/실적/제출서류 체크리스트\n"
+                "   - 이 섹션에서는 qualification_requirements, performance_requirements, document_requirements를 "
+                "체크박스 형식으로 작성하라. 예: '- [ ] 건설업 면허', '- [ ] 최근 3년 실적 1건 이상'\n"
+                "   - 정보가 없다면 '해당 정보 없음'이 아니라 일반적인 입찰의 기본 요건을 추론하여 작성하라.\n"
                 "# 3. 낙찰가 예측(범위/포인트/근거/)\n"
                 # --- 추가 및 수정된 부분 ---
                 "   - 이 섹션에는 반드시 '### 사정율 구간에 따른 상위 3개의 확률'이라는 소제목을 포함하라.\n"
                 "   - 전달된 데이터 중 'top_ranges'에 있는 상위 3개 구간의 사정율 범위와 확률(%) 정보를 가독성 있게 작성하라.\n"
-                "   - 사정율은 소수점 둘째 자리까지 표기하고, 각 구간별 확률값(%)을 명시하라.\n"
+                "   - 사정율은 백분율(%)로 표기하고, 각 구간별 확률값(%)을 명시하라.\n"
+                "   - 예: '1순위: 6.85% (확률 29.57%)'\n"
                 # ------------------------
                 "# 4. 권고 액션(다음 72시간 To-Do)\n\n"
                 "제약: 근거가 불충분하면 '가정'으로 명시하고 추가 수집 항목을 제시하라."

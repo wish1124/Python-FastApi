@@ -250,7 +250,7 @@ class ProbabilityPredictor:
             probability = avg_pdf * bin_width
 
             bin_info.append({
-                'range': f'{(lower - 1) * 100:+.1f}% ~ {(upper - 1) * 100:+.1f}%',  # 증감으로 표시, 0.1%p 단위, ~ 앞뒤 공백
+                'range': f'{abs(lower - 1) * 100:.1f}% ~ {abs(upper - 1) * 100:.1f}%',  # 사정율을 양수로 표시
                 'lower': float(lower),
                 'upper': float(upper),
                 'center': float((lower + upper) / 2),

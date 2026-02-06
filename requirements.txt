@@ -3,6 +3,7 @@ fastapi>=0.109.0
 uvicorn>=0.27.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
+python-multipart>=0.0.6  # ← FastAPI 파일 업로드 및 Form 데이터 필수
 
 # AI 및 데이터 처리 (유연한 버전 적용)
 torch>=2.0.0

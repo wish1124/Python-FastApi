@@ -128,8 +128,8 @@ class ProbabilityPredictor:
         return {
             'probability': float(probability),
             'probability_percent': float(probability * 100),
-            'lower_bound': lower_bound,
-            'upper_bound': upper_bound,
+            'lower_bound': float(lower_bound),
+            'upper_bound': float(upper_bound),
             'lower_quantile_index': int(lower_idx),
             'upper_quantile_index': int(upper_idx),
             'median_prediction': float(pred_quantiles[499]),
@@ -252,16 +252,16 @@ class ProbabilityPredictor:
             bin_info.append({
                 # 프론트엔드 표시용 (명확한 필드명)
                 'range_display': f'{abs(lower - 1) * 100:.1f}% ~ {abs(upper - 1) * 100:.1f}%',  # 구간
-                'rate': abs((lower + upper) / 2 - 1) * 100,  # 사정율 (%)
-                'probability': float(probability * 100),  # 확률 (%)
+                'rate': float(abs((lower + upper) / 2 - 1) * 100),  # 사정율 (%) - Python float
+                'probability': float(probability * 100),  # 확률 (%) - Python float
 
                 # 기존 필드 (하위 호환성)
                 'range': f'{abs(lower - 1) * 100:.1f}% ~ {abs(upper - 1) * 100:.1f}%',
                 'lower': float(lower),
                 'upper': float(upper),
                 'center': float((lower + upper) / 2),  # 배율 (1 + 사정율)
-                'center_percent': abs((lower + upper) / 2 - 1) * 100,  # 사정율 백분율
-                'pdf': avg_pdf,  # 확률밀도 f(y)
+                'center_percent': float(abs((lower + upper) / 2 - 1) * 100),  # 사정율 백분율
+                'pdf': float(avg_pdf),  # 확률밀도 f(y)
                 'probability_percent': float(probability * 100)
             })
 
@@ -285,8 +285,12 @@ class ProbabilityPredictor:
             'top_ranges': sorted_bins[:top_k],
             'all_ranges': sorted_bins,
             'total_bins': len(sorted_bins),
-            'bin_width': bin_width,
-            'prediction_range': {'min': min_val, 'max': max_val, 'range': max_val - min_val},
+            'bin_width': float(bin_width),
+            'prediction_range': {
+                'min': float(min_val),
+                'max': float(max_val),
+                'range': float(max_val - min_val)
+            },
             'statistics': {
                 'median': float(pred_quantiles[499]),
                 'mean': float(np.mean(pred_quantiles)),

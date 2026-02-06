@@ -8,17 +8,24 @@ import json
 import numpy as np
 import uuid
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
+import tempfile
+import shutil
 from fpdf import FPDF
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from datetime import datetime
 
 # --- 모듈 임포트 ---
 try:
-    from BidAssitanceModel import BidRAGPipeline
+    from BidAssitanceModel import (
+        BidRAGPipeline,
+        extract_text_from_hwp,
+        extract_text_from_hwpx,
+        extract_text_from_pdf
+    )
     from get_probability_from_model import ProbabilityPredictor  # ✅ TFT 모델 사용
 except ImportError as e:
     print(f"❌ 필수 모듈 로딩 실패: {e}")
@@ -107,8 +114,8 @@ class TFTPredictorAdapter:
 
                 return {
                     "currency": "KRW",
-                    "point_estimate": award_price,                      # 원 단위 낙찰가
-                    "predicted_sashiritsu": pred_sashiritsu,            # 사정율 (최고확률)
+                    "point_estimate": award_price,  # 원 단위 낙찰가
+                    "predicted_sashiritsu": pred_sashiritsu,  # 사정율 (최고확률)
                     "predicted_min": float(result["statistics"]["q25"]),  # 사정율 하한 (q25)
                     "predicted_max": float(result["statistics"]["q75"]),  # 사정율 상한 (q75)
                     "confidence": "high",
@@ -204,19 +211,89 @@ def generate_pdf(report_text, output_path):
 
 
 @app.post("/analyze")
-async def analyze(req: Dict[str, Any]):
-    """입찰공고 분석 + TFT 예측 + PDF 생성 + Azure 업로드"""
+async def analyze(
+        text: Optional[str] = Form(None),
+        thread_id: Optional[str] = Form("default"),
+        file: Optional[UploadFile] = File(None)
+):
+    """입찰공고 분석 + TFT 예측 + PDF 생성 + Azure 업로드
+
+    Parameters:
+    - text: 직접 입력한 텍스트 (선택)
+    - file: 업로드 파일 (.hwp, .hwpx, .pdf, .txt) (선택)
+    - thread_id: 스레드 ID (기본값: "default")
+
+    Note: file과 text 중 최소 하나는 제공되어야 합니다. 둘 다 있으면 file 우선.
+    """
     try:
-        # 1. RAG 파이프라인 분석 수행
+        # 1. 텍스트 추출 또는 받기
+        bid_text = ""
+
+        if file:
+            # 파일이 업로드된 경우
+            filename = file.filename.lower()
+
+            # 임시 파일로 저장
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp_file:
+                shutil.copyfileobj(file.file, tmp_file)
+                tmp_path = tmp_file.name
+
+            try:
+                # 확장자에 따라 텍스트 추출
+                if filename.endswith('.hwp'):
+                    print(f"📄 HWP 파일 추출 중: {filename}")
+                    bid_text = extract_text_from_hwp(tmp_path)
+                elif filename.endswith('.hwpx'):
+                    print(f"📄 HWPX 파일 추출 중: {filename}")
+                    bid_text = extract_text_from_hwpx(tmp_path)
+                elif filename.endswith('.pdf'):
+                    print(f"📄 PDF 파일 추출 중: {filename}")
+                    bid_text = extract_text_from_pdf(tmp_path)
+                elif filename.endswith('.txt'):
+                    print(f"📄 TXT 파일 읽기 중: {filename}")
+                    with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        bid_text = f.read()
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"지원하지 않는 파일 형식입니다. (.hwp, .hwpx, .pdf, .txt만 가능)"
+                    )
+
+                print(f"✅ 텍스트 추출 완료: {len(bid_text)} 글자")
+
+            finally:
+                # 임시 파일 삭제
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+
+        elif text:
+            # 직접 텍스트가 제공된 경우
+            bid_text = text
+            print(f"✅ 텍스트 직접 입력: {len(bid_text)} 글자")
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="file 또는 text 중 하나는 반드시 제공되어야 합니다."
+            )
+
+        # 텍스트가 너무 짧으면 오류
+        if len(bid_text.strip()) < 50:
+            raise HTTPException(
+                status_code=400,
+                detail="추출된 텍스트가 너무 짧습니다. 파일 형식이나 내용을 확인해주세요."
+            )
+
+        # 2. RAG 파이프라인 분석 수행
         result = rag_pipeline.analyze(
-            req.get("text", ""),
-            thread_id=req.get("thread_id", "default")
+            bid_text,
+            thread_id=thread_id
         )
 
         report_md = result.get("report_markdown", "")
         prediction_result = result.get("prediction_result", {})
 
-        # 2. PDF 저장 폴더 준비
+        # 3. PDF 저장 폴더 준비
         output_dir = "./output"
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -224,7 +301,7 @@ async def analyze(req: Dict[str, Any]):
         pdf_filename = f"report_{uuid.uuid4().hex[:6]}.pdf"
         pdf_path = os.path.join(output_dir, pdf_filename)
 
-        # 3. PDF 생성 및 Azure 업로드
+        # 4. PDF 생성 및 Azure 업로드
         final_url = None
         try:
             if not report_md:
@@ -239,7 +316,7 @@ async def analyze(req: Dict[str, Any]):
             print(f"❌ PDF/Azure 처리 실패: {e}")
             final_url = f"PDF 생성 실패: {str(e)}"
 
-        # 4. 응답 반환
+        # 5. 응답 반환
         return {
             "extracted_requirements": result.get("requirements", {}),
             "prediction": prediction_result,  # ✅ top_ranges 포함됨
@@ -247,6 +324,8 @@ async def analyze(req: Dict[str, Any]):
             "pdf_link": final_url
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ /analyze 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -277,18 +356,18 @@ async def predict_base(req: Dict[str, List[float]]):
             budget = features[3]  # 기초금액
 
             # 낙찰가 계산: 사정율 × 낙찰하한율 × 추정가격
-            lower_rate = features[1]   # 낙찰하한율
-            estimate = features[2]     # 추정가격
+            lower_rate = features[1]  # 낙찰하한율
+            estimate = features[2]  # 추정가격
             pred_sashiritsu = top_ranges[0]["center"]
             award_price = round(pred_sashiritsu * lower_rate * estimate)
             award_min = round(result["statistics"]["q25"] * lower_rate * estimate)
-            award_max = round(result["statistics"]["q75"] * lower_rate * estimate) #
+            award_max = round(result["statistics"]["q75"] * lower_rate * estimate)  #
 
             return {
-                "predBid": pred_sashiritsu,                             # 사정율
-                "award_price": award_price,                             # 원 단위 낙찰가
-                "award_min": award_min,                                 # 낙찰가 하한 (q25)
-                "award_max": award_max,                                 # 낙찰가 상한 (q75)
+                "predBid": pred_sashiritsu,  # 사정율
+                "award_price": award_price,  # 원 단위 낙찰가
+                "award_min": award_min,  # 낙찰가 하한 (q25)
+                "award_max": award_max,  # 낙찰가 상한 (q75)
                 "top_ranges": top_ranges,
                 "statistics": result["statistics"]
             }

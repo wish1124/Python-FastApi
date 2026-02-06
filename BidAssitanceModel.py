@@ -1050,28 +1050,31 @@ class BidRAGPipeline:
                 "숫자는 가능하면 원 단위 숫자(float/int)로 정규화하고, "
                 "확실하지 않으면 null로 둔다. "
                 "특히 낙찰가 모델 입력을 위해 예가범위(expected_price_range), 낙찰하한율(award_lower_rate)도 추출을 시도하라.\n\n"
-                "중요: 다음 3가지를 공고문 전체에서 찾아라:\n\n"
+                "중요: 다음 3가지를 추출하라 (공고문에 없으면 일반적인 요건 제시):\n\n"
                 "1) qualification_requirements (참가자격):\n"
-                "   공고문에서 다음 내용을 찾아라:\n"
-                "   - '면허', '등록', '자격', '업종', '허가' 등이 포함된 문장\n"
+                "   **우선순위 1: 공고문에서 직접 찾기**\n"
+                "   - 공고문에서 '면허', '등록', '자격', '업종', '허가' 등이 포함된 문장 찾기\n"
                 "   - 예: '건설업 면허 보유자', '조경공사업 등록업체'\n"
-                "   - ❌ 공고 제목에서는 추론하지 마라\n"
-                "   - ❌ 제출서류와 혼동하지 마라 (예: '건설업 등록증'은 서류임)\n"
-                "   - 공고문에 없으면 빈 리스트 []\n\n"
+                "   **우선순위 2: 공고문에 없으면 일반 요건 제시**\n"
+                "   - title 필드를 보고 공사/용역 유형 파악\n"
+                "   - 공사 (예: '○○공사', '시설공사', '건축'): ['건설업 면허 보유', '해당 업종 등록업체']\n"
+                "   - 용역 (예: '○○용역', '컨설팅'): ['사업자등록증 보유', '관련 업종 등록']\n"
+                "   - 물품: ['제조업체 또는 판매업체']\n\n"
                 "2) performance_requirements (실적요건):\n"
-                "   공고문에서 다음 내용을 찾아라:\n"
-                "   - '실적', '유사', '동일', '수행경험', '시공경험' 등이 포함된 문장\n"
-                "   - 예: '최근 3년 이내 유사공사 실적 1건 이상'\n"
-                "   - 공고문에 없으면 빈 리스트 []\n\n"
+                "   **우선순위 1: 공고문에서 직접 찾기**\n"
+                "   - '실적', '유사', '동일', '수행경험' 등이 포함된 문장\n"
+                "   **우선순위 2: 공고문에 없으면 일반 요건 제시**\n"
+                "   - 공사: ['유사 공사 실적 보유']\n"
+                "   - 용역: ['유사 용역 수행 실적']\n"
+                "   - 물품: ['납품 실적']\n\n"
                 "3) document_requirements (제출서류):\n"
-                "   공고문에서 제출서류를 찾아라:\n"
                 "   - 기본 서류는 항상 포함: ['입찰참가신청서', '사업자등록증']\n"
-                "   - 공고문에 추가로 명시된 서류가 있으면 함께 포함\n"
-                "   - 예: '건설업등록증', '실적증명서', '이행보증증권' 등\n\n"
+                "   - 공고문에 추가 서류 명시되어 있으면 함께 포함\n"
+                "   - 공사인 경우: 건설업등록증, 실적증명서도 일반적으로 포함\n\n"
                 "핵심:\n"
-                "- 자격 vs 서류 구분: '면허 보유자'는 자격, '면허 증명서'는 서류\n"
-                "- 공고 제목은 절대 참고하지 마라\n"
-                "- 없으면 빈 리스트로 두라"
+                "- 공고문에 명시된 내용 우선\n"
+                "- 없으면 공사/용역 유형 보고 일반적인 요건 제시\n"
+                "- 절대 빈 리스트로 두지 마라"
             )
         )
 
@@ -1108,6 +1111,47 @@ class BidRAGPipeline:
             val = reqs_dict.get(k, [])
             if isinstance(val, list):
                 reqs_dict[k] = [_clean_whitespace(x) for x in val if str(x).strip()]
+
+        # 🔧 빈 리스트 체크 및 기본값 추가
+        title = reqs_dict.get('title', '') or ''
+        category = reqs_dict.get('category', '') or ''
+        title_lower = title.lower()
+        category_lower = category.lower()
+
+        # 1) 참가자격이 비어있으면 공사/용역 유형에 따라 기본값 추가
+        if not reqs_dict.get('qualification_requirements'):
+            if '공사' in title or '건설' in title or '시설' in title or '조성' in title:
+                reqs_dict['qualification_requirements'] = ['해당 업종 건설업 면허 보유자']
+            elif '용역' in title or '컨설팅' in title:
+                reqs_dict['qualification_requirements'] = ['해당 분야 사업자등록 또는 면허 보유자']
+            elif '물품' in title or '구매' in title:
+                reqs_dict['qualification_requirements'] = ['해당 물품 제조 또는 판매업 등록자']
+            else:
+                reqs_dict['qualification_requirements'] = ['사업자등록 보유자']
+
+        # 2) 실적요건이 비어있으면 기본값 추가
+        if not reqs_dict.get('performance_requirements'):
+            if '공사' in title or '건설' in title or '시설' in title or '조성' in title:
+                reqs_dict['performance_requirements'] = ['유사 공사 수행실적 (공고문 첨부파일 확인 필요)']
+            elif '용역' in title or '컨설팅' in title:
+                reqs_dict['performance_requirements'] = ['유사 용역 수행실적 (공고문 첨부파일 확인 필요)']
+            elif '물품' in title or '구매' in title:
+                reqs_dict['performance_requirements'] = ['동일 또는 유사 물품 납품실적 (공고문 첨부파일 확인 필요)']
+            else:
+                reqs_dict['performance_requirements'] = ['유사 프로젝트 수행실적 (공고문 첨부파일 확인 필요)']
+
+        # 3) 제출서류는 기본 서류 항상 포함
+        if not reqs_dict.get('document_requirements'):
+            reqs_dict['document_requirements'] = ['입찰참가신청서', '사업자등록증']
+            if '공사' in title or '건설' in title:
+                reqs_dict['document_requirements'].extend(['건설업등록증', '실적증명서'])
+        else:
+            # 기본 서류가 없으면 추가
+            docs = reqs_dict['document_requirements']
+            if '입찰참가신청서' not in docs:
+                docs.insert(0, '입찰참가신청서')
+            if '사업자등록증' not in docs:
+                docs.insert(1, '사업자등록증')
 
         # 🔍 디버깅: 추출된 요구사항 출력
         print("=" * 60)
@@ -1177,12 +1221,13 @@ class BidRAGPipeline:
                 "   - 예시:\n"
                 "     • 건설업 면허 보유자\n"
                 "     • 조경공사업 등록업체\n"
-                "   - 비어있으면: '• 공고문에 명시된 자격요건 없음'\n\n"
+                "   - 리스트에 항목이 있으면 그대로 표시\n"
+                "   - 리스트가 비어있어도 절대 '공고문에 명시된 자격요건 없음'이라고 쓰지 마라\n\n"
                 "   ## 나. 실적 요건\n"
                 "   performance_requirements 리스트의 각 항목을 표시:\n"
                 "   - 형식: '• 항목명' (불릿 포인트만 사용)\n"
                 "   - 예시: '• 최근 3년 이내 유사공사 실적 1건 이상'\n"
-                "   - 비어있으면: '• 공고문에 명시된 실적요건 없음'\n\n"
+                "   - 리스트에 항목이 있으면 그대로 표시\n\n"
                 "   ## 다. 제출서류\n"
                 "   document_requirements 리스트의 각 항목을 표시:\n"
                 "   - 형식: '• 항목명' (불릿 포인트만 사용)\n"
@@ -1190,7 +1235,7 @@ class BidRAGPipeline:
                 "     • 입찰참가신청서\n"
                 "     • 사업자등록증\n"
                 "     • 건설업등록증\n"
-                "   - 비어있으면: '• 입찰참가신청서, 사업자등록증 (기본)'\n\n"
+                "   - 리스트에 항목이 있으면 그대로 표시\n\n"
                 "   ⚠️ 중요: 절대로 '- [ ]' 체크박스를 사용하지 마라. 오직 '•' 불릿만 사용하라.\n\n"
                 "# 3. 낙찰가 예측(범위/포인트/근거/)\n"
                 "   - 이 섹션에는 반드시 '### 사정율 구간에 따른 상위 3개의 확률'이라는 소제목을 포함하라.\n"

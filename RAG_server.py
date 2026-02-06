@@ -108,9 +108,9 @@ class TFTPredictorAdapter:
             if result and result.get("top_ranges"):
                 top_ranges = result["top_ranges"]
 
-                # 낙찰가 계산: 사정율 × 낙찰하한율 × 추정가격
+                # 낙찰가 계산: 기초금액 × (1 + 사정율) × 낙찰하한율
                 pred_sashiritsu = float(top_ranges[0]["center"])
-                award_price = round(pred_sashiritsu * lower_rate * estimate) if (lower_rate and estimate) else None
+                award_price = round(budget * (1 + pred_sashiritsu) * lower_rate) if (budget and lower_rate) else None
 
                 return {
                     "currency": "KRW",
@@ -380,13 +380,12 @@ async def predict_base(req: Dict[str, List[float]]):
             top_ranges = result["top_ranges"]
             budget = features[3]  # 기초금액
 
-            # 낙찰가 계산: 사정율 × 낙찰하한율 × 추정가격
+            # 낙찰가 계산: 기초금액 × (1 + 사정율) × 낙찰하한율
             lower_rate = features[1]  # 낙찰하한율
-            estimate = features[2]  # 추정가격
             pred_sashiritsu = top_ranges[0]["center"]
-            award_price = round(pred_sashiritsu * lower_rate * estimate)
-            award_min = round(result["statistics"]["q25"] * lower_rate * estimate)
-            award_max = round(result["statistics"]["q75"] * lower_rate * estimate)
+            award_price = round(budget * (1 + pred_sashiritsu) * lower_rate)
+            award_min = round(budget * (1 + result["statistics"]["q25"]) * lower_rate)
+            award_max = round(budget * (1 + result["statistics"]["q75"]) * lower_rate)
 
             return {
                 "predBid": pred_sashiritsu,  # 사정율

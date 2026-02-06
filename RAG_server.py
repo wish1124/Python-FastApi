@@ -7,13 +7,13 @@ import os
 import json
 import numpy as np
 import uuid
+import tempfile
+import shutil
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-import tempfile
-import shutil
 from fpdf import FPDF
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from datetime import datetime
@@ -211,80 +211,102 @@ def generate_pdf(report_text, output_path):
 
 
 @app.post("/analyze")
-async def analyze(
-        text: Optional[str] = Form(None),
-        thread_id: Optional[str] = Form("default"),
-        file: Optional[UploadFile] = File(None)
-):
+async def analyze(request: Request):
     """입찰공고 분석 + TFT 예측 + PDF 생성 + Azure 업로드
 
-    Parameters:
-    - text: 직접 입력한 텍스트 (선택)
-    - file: 업로드 파일 (.hwp, .hwpx, .pdf, .txt) (선택)
-    - thread_id: 스레드 ID (기본값: "default")
-
-    Note: file과 text 중 최소 하나는 제공되어야 합니다. 둘 다 있으면 file 우선.
+    지원하는 요청 방식:
+    1. JSON body: {"text": "공고문 내용", "thread_id": "optional"}
+    2. Form + File: file 업로드 (.hwp, .hwpx, .pdf, .txt)
     """
     try:
-        # 1. 텍스트 추출 또는 받기
         bid_text = ""
+        thread_id = "default"
 
-        if file:
-            # 파일이 업로드된 경우
-            filename = file.filename.lower()
+        # Content-Type 확인
+        content_type = request.headers.get("content-type", "")
+        print(f"📥 수신된 Content-Type: {content_type}")
 
-            # 임시 파일로 저장
-            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp_file:
-                shutil.copyfileobj(file.file, tmp_file)
-                tmp_path = tmp_file.name
-
+        # 1. JSON 요청 처리 (기존 Spring Boot 방식)
+        if "application/json" in content_type:
             try:
-                # 확장자에 따라 텍스트 추출
-                if filename.endswith('.hwp'):
-                    print(f"📄 HWP 파일 추출 중: {filename}")
-                    bid_text = extract_text_from_hwp(tmp_path)
-                elif filename.endswith('.hwpx'):
-                    print(f"📄 HWPX 파일 추출 중: {filename}")
-                    bid_text = extract_text_from_hwpx(tmp_path)
-                elif filename.endswith('.pdf'):
-                    print(f"📄 PDF 파일 추출 중: {filename}")
-                    bid_text = extract_text_from_pdf(tmp_path)
-                elif filename.endswith('.txt'):
-                    print(f"📄 TXT 파일 읽기 중: {filename}")
-                    with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        bid_text = f.read()
-                else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"지원하지 않는 파일 형식입니다. (.hwp, .hwpx, .pdf, .txt만 가능)"
-                    )
+                body = await request.json()
+                print(f"📦 JSON Body: {body}")
+                bid_text = body.get("text", "")
+                thread_id = body.get("thread_id", "default")
+                print(f"✅ JSON 요청 수신: 텍스트 {len(bid_text)} 글자, thread_id={thread_id}")
+            except Exception as e:
+                print(f"❌ JSON 파싱 실패: {e}")
+                raise HTTPException(status_code=400, detail=f"JSON 파싱 실패: {str(e)}")
 
-                print(f"✅ 텍스트 추출 완료: {len(bid_text)} 글자")
+        # 2. 파일 업로드 처리
+        elif "multipart/form-data" in content_type:
+            form = await request.form()
 
-            finally:
-                # 임시 파일 삭제
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+            # thread_id 가져오기
+            thread_id = form.get("thread_id", "default")
 
-        elif text:
-            # 직접 텍스트가 제공된 경우
-            bid_text = text
-            print(f"✅ 텍스트 직접 입력: {len(bid_text)} 글자")
+            # 텍스트 직접 입력 확인
+            text_input = form.get("text")
+            if text_input:
+                bid_text = str(text_input)
+                print(f"✅ Form 텍스트 입력: {len(bid_text)} 글자")
+
+            # 파일 업로드 확인
+            file = form.get("file")
+            if file and hasattr(file, "filename"):
+                filename = file.filename.lower()
+
+                # 임시 파일로 저장
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp_file:
+                    content = await file.read()
+                    tmp_file.write(content)
+                    tmp_path = tmp_file.name
+
+                try:
+                    # 확장자에 따라 텍스트 추출
+                    if filename.endswith('.hwp'):
+                        print(f"📄 HWP 파일 추출 중: {filename}")
+                        bid_text = extract_text_from_hwp(tmp_path)
+                    elif filename.endswith('.hwpx'):
+                        print(f"📄 HWPX 파일 추출 중: {filename}")
+                        bid_text = extract_text_from_hwpx(tmp_path)
+                    elif filename.endswith('.pdf'):
+                        print(f"📄 PDF 파일 추출 중: {filename}")
+                        bid_text = extract_text_from_pdf(tmp_path)
+                    elif filename.endswith('.txt'):
+                        print(f"📄 TXT 파일 읽기 중: {filename}")
+                        with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            bid_text = f.read()
+                    else:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"지원하지 않는 파일 형식입니다. (.hwp, .hwpx, .pdf, .txt만 가능)"
+                        )
+
+                    print(f"✅ 파일에서 텍스트 추출 완료: {len(bid_text)} 글자")
+
+                finally:
+                    # 임시 파일 삭제
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
 
         else:
+            print(f"❌ 지원하지 않는 Content-Type: {content_type}")
             raise HTTPException(
                 status_code=400,
-                detail="file 또는 text 중 하나는 반드시 제공되어야 합니다."
+                detail="Content-Type은 'application/json' 또는 'multipart/form-data'이어야 합니다."
             )
 
-        # 텍스트가 너무 짧으면 오류
-        if len(bid_text.strip()) < 50:
+        # 텍스트 검증
+        print(f"🔍 텍스트 검증: 길이={len(bid_text)}, 공백제거 길이={len(bid_text.strip())}")
+        if not bid_text or len(bid_text.strip()) < 50:
+            print(f"❌ 텍스트가 너무 짧음: {len(bid_text.strip())} 글자")
             raise HTTPException(
                 status_code=400,
-                detail="추출된 텍스트가 너무 짧습니다. 파일 형식이나 내용을 확인해주세요."
+                detail=f"텍스트가 없거나 너무 짧습니다. (현재 {len(bid_text.strip())}자, 최소 50자 이상 필요)"
             )
 
-        # 2. RAG 파이프라인 분석 수행
+        # 3. RAG 파이프라인 분석 수행
         result = rag_pipeline.analyze(
             bid_text,
             thread_id=thread_id
@@ -293,7 +315,7 @@ async def analyze(
         report_md = result.get("report_markdown", "")
         prediction_result = result.get("prediction_result", {})
 
-        # 3. PDF 저장 폴더 준비
+        # 4. PDF 저장 폴더 준비
         output_dir = "./output"
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -301,7 +323,7 @@ async def analyze(
         pdf_filename = f"report_{uuid.uuid4().hex[:6]}.pdf"
         pdf_path = os.path.join(output_dir, pdf_filename)
 
-        # 4. PDF 생성 및 Azure 업로드
+        # 5. PDF 생성 및 Azure 업로드
         final_url = None
         try:
             if not report_md:
@@ -316,7 +338,7 @@ async def analyze(
             print(f"❌ PDF/Azure 처리 실패: {e}")
             final_url = f"PDF 생성 실패: {str(e)}"
 
-        # 5. 응답 반환
+        # 6. 응답 반환
         return {
             "extracted_requirements": result.get("requirements", {}),
             "prediction": prediction_result,  # ✅ top_ranges 포함됨
@@ -324,10 +346,13 @@ async def analyze(
             "pdf_link": final_url
         }
 
-    except HTTPException:
+    except HTTPException as he:
+        print(f"❌ HTTPException 발생: status={he.status_code}, detail={he.detail}")
         raise
     except Exception as e:
-        print(f"❌ /analyze 오류: {e}")
+        print(f"❌ /analyze 예상치 못한 오류: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -361,7 +386,7 @@ async def predict_base(req: Dict[str, List[float]]):
             pred_sashiritsu = top_ranges[0]["center"]
             award_price = round(pred_sashiritsu * lower_rate * estimate)
             award_min = round(result["statistics"]["q25"] * lower_rate * estimate)
-            award_max = round(result["statistics"]["q75"] * lower_rate * estimate)  #
+            award_max = round(result["statistics"]["q75"] * lower_rate * estimate)
 
             return {
                 "predBid": pred_sashiritsu,  # 사정율
@@ -384,7 +409,7 @@ def root():
     return {
         "status": "running",
         "model": "TFT (Quantile Transformer)",
-        "features": ["top_ranges", "PDF generation", "Azure upload"]
+        "features": ["top_ranges", "PDF generation", "Azure upload", "File upload (.hwp, .hwpx, .pdf, .txt)"]
     }
 
 

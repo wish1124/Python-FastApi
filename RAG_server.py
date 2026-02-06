@@ -108,6 +108,20 @@ class TFTPredictorAdapter:
             if result and result.get("top_ranges"):
                 top_ranges = result["top_ranges"]
 
+                # 🔍 디버그: top_ranges 상세 출력
+                print("=" * 60)
+                print(" [DEBUG] TFTPredictorAdapter - top_ranges 상세:")
+                for i, r in enumerate(top_ranges[:3]):
+                    print(f"  {i+1}순위:")
+                    print(f"    range: {r.get('range')}")
+                    print(f"    range_display: {r.get('range_display')}")
+                    print(f"    center: {r.get('center')}")
+                    print(f"    rate: {r.get('rate')}")
+                    print(f"    probability: {r.get('probability')}")
+                    print(f"    lower: {r.get('lower')}")
+                    print(f"    upper: {r.get('upper')}")
+                print("=" * 60)
+
                 # 낙찰가 계산: 기초금액 × 배율(1+사정율) × 낙찰하한율
                 # center는 배율 (1 + 사정율) 형태
                 pred_multiplier = float(top_ranges[0]["center"])  # 배율

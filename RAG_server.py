@@ -108,16 +108,17 @@ class TFTPredictorAdapter:
             if result and result.get("top_ranges"):
                 top_ranges = result["top_ranges"]
 
-                # 낙찰가 계산: 기초금액 × (1 + 사정율) × 낙찰하한율
-                pred_sashiritsu = float(top_ranges[0]["center"])
-                award_price = round(budget * (1 + pred_sashiritsu) * lower_rate) if (budget and lower_rate) else None
+                # 낙찰가 계산: 기초금액 × 배율(1+사정율) × 낙찰하한율
+                # center는 배율 (1 + 사정율) 형태
+                pred_multiplier = float(top_ranges[0]["center"])  # 배율
+                award_price = round(budget * pred_multiplier * lower_rate) if (budget and lower_rate) else None
 
                 return {
                     "currency": "KRW",
                     "point_estimate": award_price,  # 원 단위 낙찰가
-                    "predicted_sashiritsu": pred_sashiritsu,  # 사정율 (최고확률)
-                    "predicted_min": float(result["statistics"]["q25"]),  # 사정율 하한 (q25)
-                    "predicted_max": float(result["statistics"]["q75"]),  # 사정율 상한 (q75)
+                    "predicted_sashiritsu": abs(pred_multiplier - 1),  # 사정율 (배율에서 변환)
+                    "predicted_min": abs(result["statistics"]["q25"] - 1),  # 사정율 하한
+                    "predicted_max": abs(result["statistics"]["q75"] - 1),  # 사정율 상한
                     "confidence": "high",
                     "top_ranges": top_ranges,
                     "statistics": result["statistics"],

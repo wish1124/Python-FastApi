@@ -250,12 +250,18 @@ class ProbabilityPredictor:
             probability = avg_pdf * bin_width
 
             bin_info.append({
-                'range': f'{abs(lower - 1) * 100:.1f}% ~ {abs(upper - 1) * 100:.1f}%',  # 사정율을 양수로 표시
+                # 프론트엔드 표시용 (명확한 필드명)
+                'range_display': f'{abs(lower - 1) * 100:.1f}% ~ {abs(upper - 1) * 100:.1f}%',  # 구간
+                'rate': abs((lower + upper) / 2 - 1) * 100,  # 사정율 (%)
+                'probability': float(probability * 100),  # 확률 (%)
+
+                # 기존 필드 (하위 호환성)
+                'range': f'{abs(lower - 1) * 100:.1f}% ~ {abs(upper - 1) * 100:.1f}%',
                 'lower': float(lower),
                 'upper': float(upper),
-                'center': float((lower + upper) / 2),
+                'center': float((lower + upper) / 2),  # 배율 (1 + 사정율)
+                'center_percent': abs((lower + upper) / 2 - 1) * 100,  # 사정율 백분율
                 'pdf': avg_pdf,  # 확률밀도 f(y)
-                'probability': float(probability),  # P(y ∈ [lower, upper]) - 정규화 전
                 'probability_percent': float(probability * 100)
             })
 

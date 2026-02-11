@@ -17,6 +17,8 @@ from typing import List, Dict, Any, Optional
 from fpdf import FPDF
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from datetime import datetime
+from security_logger import SecurityLogMiddleware
+from rate_limit import RateLimitMiddleware
 
 # --- 모듈 임포트 ---
 try:
@@ -171,6 +173,8 @@ rag_pipeline = BidRAGPipeline(
 # ==========================================
 app = FastAPI(title="Integrated Bid Prediction API with TFT")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(RateLimitMiddleware)      # [보안추가] 과도한 요청 차단
+app.add_middleware(SecurityLogMiddleware)   # [보안추가] 접근/해킹 시도 로깅
 
 # --- Azure Blob Storage 설정 ---
 load_dotenv()
@@ -178,11 +182,14 @@ AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
 AZURE_CONTAINER_NAME = "uploads"
 
 if not AZURE_STORAGE_CONNECTION_STRING:
-    raise ValueError("❌환경변수 'AZURE_STORAGE_CONNECTION_STRING'이 설정되지 않았습니다!")
+    print("⚠️ Azure 연결 문자열 없음 - 로컬 모드로 실행")
 
 
 def upload_to_azure(file_path, file_name):
     """Azure Blob Storage에 파일 업로드"""
+    if not AZURE_STORAGE_CONNECTION_STRING:
+        print("⚠️ Azure 미연결 → 로컬 파일 경로 사용")
+        return file_path
     try:
         blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
         blob_client = blob_service_client.get_blob_client(container=AZURE_CONTAINER_NAME, blob=file_name)

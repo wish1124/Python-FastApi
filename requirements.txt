@@ -47,5 +47,5 @@ matplotlib>=3.8.0
 azure-storage-blob
 
 # 모델 v2 의존성
-ightgbm>=4.0.0
+lightgbm>=4.0.0
 xgboost>=2.0.0

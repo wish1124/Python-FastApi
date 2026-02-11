@@ -9,6 +9,7 @@ import numpy as np
 import uuid
 import tempfile
 import shutil
+import joblib
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,7 @@ from azure.storage.blob import BlobServiceClient, ContentSettings
 from datetime import datetime
 from security_logger import SecurityLogMiddleware
 from rate_limit import RateLimitMiddleware
+
 
 # --- 모듈 임포트 ---
 try:
@@ -58,15 +60,15 @@ def parsenumber(value: Any) -> Optional[float]:
 # ==========================================
 # 1. TFT 모델 로드
 # ==========================================
-TFT_MODEL_PATH = "./results_transformer_4feat/best_model.pt"
-try:
-    tft_predictor = ProbabilityPredictor(model_path=TFT_MODEL_PATH)
-    print("✅ TFT 모델 로드 성공")
-except Exception as e:
-    print(f"⚠️ TFT 모델 로드 실패: {e}")
-    tft_predictor = None
+# TFT_MODEL_PATH = "./results_transformer_4feat/best_model.pt"
+# try:
+#     tft_predictor = ProbabilityPredictor(model_path=TFT_MODEL_PATH)
+#     print("✅ TFT 모델 로드 성공")
+# except Exception as e:
+#     print(f"⚠️ TFT 모델 로드 실패: {e}")
+#     tft_predictor = None
 
-
+tft_predictor = None
 # ==========================================
 # 2. TFT 예측 어댑터 (top_ranges 포함)
 # ==========================================
@@ -157,6 +159,82 @@ class TFTPredictorAdapter:
                 "confidence": "error",
                 "rationale": f"Prediction Failed: {str(e)}"
             }
+# =========================================================
+# [모델v2추가] pkl 모델 + scaler 로드 (투찰율/사정율 % 예측용)
+# =========================================================
+V2_MODEL_PATH = "./model/model_v2.pkl"
+V2_SCALER_PATH = "./model/scaler2.pkl"
+
+v2_model = None
+v2_scaler = None
+
+try:
+    if os.path.exists(V2_MODEL_PATH) and os.path.exists(V2_SCALER_PATH):
+        v2_model = joblib.load(V2_MODEL_PATH)
+        v2_scaler = joblib.load(V2_SCALER_PATH)
+        print("✅ V2(pkl) 모델/스케일러 로드 성공")
+    else:
+        print("⚠️ V2(pkl) 파일 없음 → 기존 모델만 사용")
+except Exception as e:
+    print(f"⚠️ V2(pkl) 로드 실패: {e}")
+    v2_model, v2_scaler = None, None
+
+except Exception as e:
+    print(f"⚠️ V2(pkl) 로드 실패: {e}")
+    v2_model, v2_scaler = None, None
+
+
+# =========================================================
+# [모델v2추가] RAG 파이프라인용 예측 함수
+# =========================================================
+def v2_award_predict(requirements: Dict[str, Any], retrieved_context: str = "") -> Dict[str, Any]:
+    try:
+        if v2_model is None or v2_scaler is None:
+            return {
+                "error": "V2 model/scaler not loaded",
+                "point_estimate": 0,
+                "confidence": "error",
+                "rationale": "V2 Model not loaded"
+            }
+
+        pr_range = parsenumber(requirements.get('expected_price_range')) or 0.0
+        lower_rate = parsenumber(requirements.get('award_lower_rate')) or 0.0
+        estimate = parsenumber(requirements.get('estimate_price')) or 0.0
+        budget = parsenumber(requirements.get('budget')) or 0.0
+
+        # =========================================================
+        # [보정추가] % 형태로 들어오면 소수로 변환 (89.745 -> 0.89745)
+        # =========================================================
+        if lower_rate > 1:
+            lower_rate = lower_rate / 100.0
+        if pr_range > 1:
+            pr_range = pr_range / 100.0
+
+        x = np.array([[pr_range, lower_rate, estimate, budget]], dtype=float)
+        x_scaled = v2_scaler.transform(x)
+        y_pred_transformed = float(v2_model.predict(x_scaled)[0])
+
+        pred_percent = (y_pred_transformed / 100.0) + 100.0
+        pred_multiplier = pred_percent / 100.0
+
+        award_price = round(budget * pred_multiplier * lower_rate) if (budget and lower_rate) else None
+
+        return {
+            "currency": "KRW",
+            "point_estimate": award_price,
+            "predicted_percent": pred_percent,
+            "confidence": "high",
+            "rationale": "V2(pkl) Model prediction",
+            "model_type": "v2_pkl",
+            "y_pred_transformed": y_pred_transformed  # [선택] PDF 근거에 쓰려면 유지
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "point_estimate": 0,
+            "confidence": "error",
+            "rationale": f"V2 Prediction Failed: {str(e)}"
+        }
 
 
 # 어댑터 및 파이프라인 생성
@@ -165,7 +243,8 @@ print("🚀 RAG 파이프라인 초기화...")
 rag_pipeline = BidRAGPipeline(
     doc_dir="./rag_corpus",
     index_dir="./rag_index",
-    award_predict_fn=adapter.predict  # ✅ TFT 어댑터 주입
+    # award_predict_fn=adapter.predict
+    award_predict_fn=v2_award_predict # ✅ TFT 어댑터 주입
 )
 
 # ==========================================
@@ -180,6 +259,8 @@ app.add_middleware(SecurityLogMiddleware)   # [보안추가] 접근/해킹 시�
 load_dotenv()
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
 AZURE_CONTAINER_NAME = "uploads"
+
+
 
 if not AZURE_STORAGE_CONNECTION_STRING:
     print("⚠️ Azure 연결 문자열 없음 - 로컬 모드로 실행")
@@ -404,9 +485,7 @@ async def analyze(request: Request):
 
 @app.post("/predictBase")
 async def predict_base(req: Dict[str, List[float]]):
-    """직접 예측 API (TFT 모델)"""
-    if not tft_predictor:
-        return {"error": "TFT Model not loaded", "predBid": 0}
+    """직접 예측 API (V2 모델 적용 버전)"""
 
     try:
         features = req.get("features", [])
@@ -420,29 +499,50 @@ async def predict_base(req: Dict[str, List[float]]):
             '기초금액': features[3]
         }
 
-        result = tft_predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=3)
+        # =========================================================
+        # [기존모델주석] TFT 모델 예측 로직 (임시 비활성화)
+        # =========================================================
+        # result = tft_predictor.get_highest_probability_ranges(input_dict, bin_width=0.001, top_k=3)
+        #
+        # if result and result.get("top_ranges"):
+        #     top_ranges = result["top_ranges"]
+        #     budget = features[3]
+        #
+        #     lower_rate = features[1]
+        #     pred_sashiritsu = top_ranges[0]["center"]
+        #     award_price = round(budget * (1 + pred_sashiritsu) * lower_rate)
+        #     award_min = round(budget * (1 + result["statistics"]["q25"]) * lower_rate)
+        #     award_max = round(budget * (1 + result["statistics"]["q75"]) * lower_rate)
+        #
+        #     return {
+        #         "predBid": pred_sashiritsu,
+        #         "award_price": award_price,
+        #         "award_min": award_min,
+        #         "award_max": award_max,
+        #         "top_ranges": top_ranges,
+        #         "statistics": result["statistics"]
+        #     }
+        # else:
+        #     return {"error": "예측 실패", "predBid": 0}
 
-        if result and result.get("top_ranges"):
-            top_ranges = result["top_ranges"]
-            budget = features[3]  # 기초금액
+        # =========================================================
+        # [모델v2추가] pkl 모델 사용 (투찰율 % 예측)
+        # =========================================================
+        if v2_model is None or v2_scaler is None:
+            return {"error": "V2 model/scaler not loaded", "predBid": 0}
 
-            # 낙찰가 계산: 기초금액 × (1 + 사정율) × 낙찰하한율
-            lower_rate = features[1]  # 낙찰하한율
-            pred_sashiritsu = top_ranges[0]["center"]
-            award_price = round(budget * (1 + pred_sashiritsu) * lower_rate)
-            award_min = round(budget * (1 + result["statistics"]["q25"]) * lower_rate)
-            award_max = round(budget * (1 + result["statistics"]["q75"]) * lower_rate)
+        x = np.array([[features[0], features[1], features[2], features[3]]], dtype=float)
+        x_scaled = v2_scaler.transform(x)
+        y_pred_transformed = float(v2_model.predict(x_scaled)[0])
 
-            return {
-                "predBid": pred_sashiritsu,  # 사정율
-                "award_price": award_price,  # 원 단위 낙찰가
-                "award_min": award_min,  # 낙찰가 하한 (q25)
-                "award_max": award_max,  # 낙찰가 상한 (q75)
-                "top_ranges": top_ranges,
-                "statistics": result["statistics"]
-            }
-        else:
-            return {"error": "예측 실패", "predBid": 0}
+        # 역산 (지시사항)
+        pred_percent = (y_pred_transformed / 100.0) + 100.0
+
+        return {
+            "predBid": pred_percent,  # 투찰율 % (101.xx 형태)
+            "model": "v2",
+            "y_pred_transformed": y_pred_transformed  # 디버깅용
+        }
 
     except Exception as e:
         return {"error": str(e), "predBid": 0}

@@ -454,3 +454,5 @@ def root():
 if __name__ == "__main__":
     nest_asyncio.apply()
     uvicorn.run(app, host="0.0.0.0", port=9999)
+
+## 보안 부분 일단은 백업

@@ -128,8 +128,17 @@ class TFTPredictorAdapter:
 
                 # 낙찰가 계산: 기초금액 × 배율(1+사정율) × 낙찰하한율
                 # center는 배율 (1 + 사정율) 형태
-                pred_multiplier = float(top_ranges[0]["center"])  # 배율
-                award_price = round(budget * pred_multiplier * lower_rate) if (budget and lower_rate) else None
+                pred_multiplier = float(top_ranges[0]["center"])
+
+                # center가 99.xx 같은 퍼센트로 들어오는 경우 방어
+                if pred_multiplier > 2:
+                    pred_multiplier /= 100.0
+
+                # 낙찰가 = 기초금액 × 투찰배율(99%)
+                award_price = round(budget * pred_multiplier) if budget else None
+
+                # 퍼센트는 금액에서 역산 → 항상 일치
+                predicted_percent = (award_price / budget) * 100 if (award_price and budget) else None
 
                 return {
                     "currency": "KRW",

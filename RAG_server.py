@@ -304,7 +304,7 @@ def v3_award_predict(requirements: Dict[str, Any], retrieved_context: str = "") 
                 "lower": low,
                 "upper": high,
                 "range": [low, high],
-                "range_display": f"{high:.1f}% ~ {low:.1f}%",
+                "range_display": f"{low:.1f}% ~ {high:.1f}%",
                 "probability": round(prob, 2),
             })
         top_ranges = converted

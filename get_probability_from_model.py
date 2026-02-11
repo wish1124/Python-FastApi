@@ -249,11 +249,17 @@ class ProbabilityPredictor:
             # 구간의 확률 ≈ ∫ f(y) dy ≈ f(y) × Δy
             probability = avg_pdf * bin_width
 
+            s_lower = (lower - 1) * 100
+            s_upper = (upper - 1) * 100
+
+            disp_low, disp_high = sorted([s_lower, s_upper])
+
             bin_info.append({
                 # 프론트엔드 표시용 (명확한 필드명)
-                'range_display': f'{abs(lower - 1) * 100:.1f}% ~ {abs(upper - 1) * 100:.1f}%',  # 구간
-                'rate': float(abs((lower + upper) / 2 - 1) * 100),  # 사정율 (%) - Python float
-                'probability': float(probability * 100),  # 확률 (%) - Python float
+
+                'range_display': f'{disp_low:.1f}% ~ {disp_high:.1f}%',  # 구간
+                'rate': float(((lower + upper) / 2 - 1) * 100),  # 중앙 사정율 (%)
+                'probability': float(probability * 100),
 
                 # 기존 필드 (하위 호환성)
                 'range': f'{abs(lower - 1) * 100:.1f}% ~ {abs(upper - 1) * 100:.1f}%',

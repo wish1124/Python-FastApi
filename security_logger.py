@@ -15,7 +15,7 @@
   app.add_middleware(SecurityLogMiddleware)
 ═══════════════════════════════════════════════════
 """
-
+import sys
 import time
 import json
 import re
@@ -30,7 +30,7 @@ logger = logging.getLogger("security.audit")
 logger.setLevel(logging.INFO)
 
 # 파일 핸들러 (JSON Lines 형식)
-_handler = logging.FileHandler("security_audit.log", encoding="utf-8")
+_handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(logging.Formatter("%(message)s"))
 logger.addHandler(_handler)
 

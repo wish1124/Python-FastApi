@@ -117,17 +117,26 @@ class TFTPredictorAdapter:
                 # 🔍 디버그: top_ranges 상세 출력
                 print("=" * 60)
                 print(" [DEBUG] TFTPredictorAdapter - top_ranges 상세:")
-                for i, r in enumerate(top_ranges[:3]):
-                    print(f"  {i+1}순위:")
-                    print(f"    range: {r.get('range')}")
-                    print(f"    range_display: {r.get('range_display')}")
-                    print(f"    center: {r.get('center')}")
-                    print(f"    rate: {r.get('rate')}")
-                    print(f"    probability: {r.get('probability')}")
-                    print(f"    lower: {r.get('lower')}")
-                    print(f"    upper: {r.get('upper')}")
-                print("=" * 60)
+                for i, r in enumerate(top_ranges[:3], start=1):
+                    center_val = r.get("center")
+                    prob_val = r.get("probability")
 
+                    # center / probability가 [값, 소수자리] 형태면 값만 꺼냄
+                    if isinstance(center_val, list):
+                        center_val = center_val[0]
+                    if isinstance(prob_val, list):
+                        prob_val = prob_val[0]
+
+                    # range_display 없으면 lower/upper로 만들어줌
+                    range_display = r.get("range_display")
+                    if not range_display and r.get("lower") is not None and r.get("upper") is not None:
+                        range_display = f"{r['lower']:.2f}% ~ {r['upper']:.2f}%"
+
+                    print(f"  {i}순위:")
+                    print(f"    range_display: {range_display}")
+                    print(f"    center: {center_val:.2f}%")
+                    print(f"    probability: {prob_val:.2f}%")
+                print("=" * 60)
                 # 낙찰가 계산: 기초금액 × 배율(1+사정율) × 낙찰하한율
                 # center는 배율 (1 + 사정율) 형태
                 pred_multiplier = float(top_ranges[0]["center"])
@@ -268,7 +277,7 @@ def v3_award_predict(requirements: Dict[str, Any], retrieved_context: str = "") 
         if "기초금액" in feat: feat["기초금액"] = float(budget)
 
         # ✅ top3 확률 구간
-        dist = get_highest_probability_ranges_v3(feat, bin_width=0.5, top_k=3)
+        dist = get_highest_probability_ranges_v3(feat, bin_width=0.0001, top_k=3)
         top_ranges = dist.get("top_ranges", [])
         statistics = dist.get("statistics", {})
 
@@ -282,32 +291,55 @@ def v3_award_predict(requirements: Dict[str, Any], retrieved_context: str = "") 
         lower_bound_price = round(budget * pred_multiplier * lower_rate) if (budget and lower_rate) else None
 
         # ----------------------------------------------------
-        # 🔥 (중요) top_ranges가 배율(1.00xx)로 오면 %로 변환해서 보고서에 예쁘게 출력
+        # ✅ (중요) LLM 보고서(report_markdown)가 바로 쓰는 포맷으로 top_ranges/statistics 정규화
+        #  - BidAssitanceModel._node_report 프롬프트가 range_display / rate / probability를 요구함
+        #  - 따라서 top_ranges에 이 키들을 "숫자(float) + 문자열"로 확정해서 넣어야 PDF에 그대로 반영됨
         # ----------------------------------------------------
         converted = []
         for r in top_ranges:
+            # dist에서 오는 값들
             center = float(r.get("center", 0.0))
             low = float(r.get("lower", 0.0))
             high = float(r.get("upper", 0.0))
+            prob = float(r.get("probability", 0.0))
 
-            # 배율이면 %로 변환
+            # center/lower/upper가 배율(1.00xx) 형태면 퍼센트(100.xx)로 변환
+            # 예: 1.0027 -> 100.27
             if center <= 2.0:
                 center *= 100.0
                 low *= 100.0
                 high *= 100.0
 
-            prob = float(r.get("probability", 0.0))  # 이미 %라고 가정
+            # 확률(prob)은 get_highest_probability_ranges_v3 결과가 보통 이미 % 스케일(예: 31.12)이라 가정
+            # 만약 0~1로 오는 경우(예: 0.3112)이면 %로 변환
+            if 0.0 <= prob <= 1.0:
+                prob *= 100.0
 
             converted.append({
                 **r,
-                "center": round(center, 2),
-                "lower": low,
-                "upper": high,
-                "range": [low, high],
-                "range_display": f"{low:.4f}% ~ {high:.4f}%",
-                "probability": round(prob, 2),
+
+                # ✅ LLM이 그대로 보고서에 쓰는 필드들
+                "range_display": f"{low:.2f}% ~ {high:.2f}%",
+                "rate": round(center, 2),  # 사정율(퍼센트 표기 값) → {rate:.2f}로 바로 출력 가능
+                "probability": round(prob, 2),  # 확률(%) → {probability:.2f}로 바로 출력 가능
+
+                # 참고용(숫자 보관)
+                "lower": round(low, 2),
+                "upper": round(high, 2),
+                "range": [round(low, 2), round(high, 2)],
             })
+
         top_ranges = converted
+
+        # statistics도 깔끔하게 (q25/q50/q75가 배율이면 %로 변환)
+        if isinstance(statistics, dict):
+            for k in ("q25", "q50", "q75"):
+                v = statistics.get(k)
+                if isinstance(v, (int, float)):
+                    v = float(v)
+                    if v <= 2.0:  # 배율이면
+                        v *= 100.0
+                    statistics[k] = round(v, 2)
 
         return {
             "currency": "KRW",
@@ -545,6 +577,7 @@ async def analyze(request: Request):
 
         pdf_filename = f"report_{uuid.uuid4().hex[:6]}.pdf"
         pdf_path = os.path.join(output_dir, pdf_filename)
+
 
         # 5. PDF 생성 및 Azure 업로드
         final_url = None

@@ -262,7 +262,7 @@ class ProbabilityPredictor:
                 'probability': float(probability * 100),
 
                 # 기존 필드 (하위 호환성)
-                'range': f'{abs(lower - 1) * 100:.1f}% ~ {abs(upper - 1) * 100:.1f}%',
+                'range': f'{abs(lower - 1) * 100:.6f}% ~ {abs(upper - 1) * 100:.6f}%',
                 'lower': float(lower),
                 'upper': float(upper),
                 'center': float((lower + upper) / 2),  # 배율 (1 + 사정율)

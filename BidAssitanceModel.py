@@ -1266,6 +1266,17 @@ class BidRAGPipeline:
         ))
         final = self.llm.invoke([sys, ctx] + messages)
         report = final.content if isinstance(final, AIMessage) else str(final)
+
+        import re
+        report = re.sub(
+            r'(구간\s*)(\d+\.\d{2})\d*%\s*~\s*(\d+\.\d{2})\d*%',
+            r'\1\2% ~ \3%',
+            report
+        )
+
+
+
+
         state["report_markdown"] = report
         return state
 

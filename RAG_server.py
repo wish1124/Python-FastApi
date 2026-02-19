@@ -32,9 +32,9 @@ try:
         extract_text_from_hwpx,
         extract_text_from_pdf
     )
-    from get_probability_from_model import ProbabilityPredictor  # ✅ TFT 모델 사용
+    from get_probability_from_model import ProbabilityPredictor  #  TFT 모델 사용
 except ImportError as e:
-    print(f"❌ 필수 모듈 로딩 실패: {e}")
+    print(f" 필수 모듈 로딩 실패: {e}")
     exit(1)
 
 
@@ -65,9 +65,9 @@ def parsenumber(value: Any) -> Optional[float]:
 # TFT_MODEL_PATH = "./results_transformer_4feat/best_model.pt"
 # try:
 #     tft_predictor = ProbabilityPredictor(model_path=TFT_MODEL_PATH)
-#     print("✅ TFT 모델 로드 성공")
+#     print(" TFT 모델 로드 성공")
 # except Exception as e:
-#     print(f"⚠️ TFT 모델 로드 실패: {e}")
+#     print(f"️ TFT 모델 로드 실패: {e}")
 #     tft_predictor = None
 
 tft_predictor = None
@@ -172,7 +172,7 @@ class TFTPredictorAdapter:
                 }
 
         except Exception as e:
-            print(f"❌ TFT 예측 오류: {e}")
+            print(f" TFT 예측 오류: {e}")
             return {
                 "error": str(e),
                 "point_estimate": 0,
@@ -192,15 +192,15 @@ class TFTPredictorAdapter:
 #     if os.path.exists(V2_MODEL_PATH) and os.path.exists(V2_SCALER_PATH):
 #         v2_model = joblib.load(V2_MODEL_PATH)
 #         v2_scaler = joblib.load(V2_SCALER_PATH)
-#         print("✅ V2(pkl) 모델/스케일러 로드 성공")
+#         print(" V2(pkl) 모델/스케일러 로드 성공")
 #     else:
-#         print("⚠️ V2(pkl) 파일 없음 → 기존 모델만 사용")
+#         print("⚠ V2(pkl) 파일 없음 → 기존 모델만 사용")
 # except Exception as e:
-#     print(f"⚠️ V2(pkl) 로드 실패: {e}")
+#     print(f"️ V2(pkl) 로드 실패: {e}")
 #     v2_model, v2_scaler = None, None
 #
 # except Exception as e:
-#     print(f"⚠️ V2(pkl) 로드 실패: {e}")
+#     print(f"️ V2(pkl) 로드 실패: {e}")
 #     v2_model, v2_scaler = None, None
 
 
@@ -256,8 +256,6 @@ class TFTPredictorAdapter:
 #             "rationale": f"V2 Prediction Failed: {str(e)}"
 #         }
 # =========================================================
-# [모델v3추가] PT + scaler_X + features(22) 기반 예측 함수
-# - 이번 모델 출력은 0.98~0.99 같은 "배율(multiplier)"로 가정 (1을 더하지 않음)
 # =========================================================
 def v3_award_predict(requirements: Dict[str, Any], retrieved_context: str = "") -> Dict[str, Any]:
     try:
@@ -276,12 +274,12 @@ def v3_award_predict(requirements: Dict[str, Any], retrieved_context: str = "") 
         if "추정가격" in feat: feat["추정가격"] = float(estimate)
         if "기초금액" in feat: feat["기초금액"] = float(budget)
 
-        # ✅ top3 확률 구간
+        #  top3 확률 구간
         dist = get_highest_probability_ranges_v3(feat, bin_width=0.0001, top_k=3)
         top_ranges = dist.get("top_ranges", [])
         statistics = dist.get("statistics", {})
 
-        # ✅ 중앙값 예측(배율)
+        #  중앙값 예측(배율)
         pred_multiplier = float(predict_sajeong_percent(feat))
         if pred_multiplier > 2:
             pred_multiplier /= 100.0
@@ -290,11 +288,7 @@ def v3_award_predict(requirements: Dict[str, Any], retrieved_context: str = "") 
         predicted_percent = (award_price / budget) * 100 if (award_price and budget) else None
         lower_bound_price = round(budget * pred_multiplier * lower_rate) if (budget and lower_rate) else None
 
-        # ----------------------------------------------------
-        # ✅ (중요) LLM 보고서(report_markdown)가 바로 쓰는 포맷으로 top_ranges/statistics 정규화
-        #  - BidAssitanceModel._node_report 프롬프트가 range_display / rate / probability를 요구함
-        #  - 따라서 top_ranges에 이 키들을 "숫자(float) + 문자열"로 확정해서 넣어야 PDF에 그대로 반영됨
-        # ----------------------------------------------------
+
         converted = []
         for r in top_ranges:
             # dist에서 오는 값들

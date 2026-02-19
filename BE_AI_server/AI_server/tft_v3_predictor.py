@@ -5,9 +5,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-MODEL_PATH = "model/tft_v3/best_model.pt"
-SCALER_PATH = "model/tft_v3/scaler_X.pkl"
-FEATURES_PATH = "model/tft_v3/features.txt"
+MODEL_PATH = "BE_AI_server/model/tft_v3/best_model.pt"
+SCALER_PATH = "BE_AI_server/model/tft_v3/scaler_X.pkl"
+FEATURES_PATH = "BE_AI_server/model/tft_v3/features.txt"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

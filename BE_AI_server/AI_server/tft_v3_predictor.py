@@ -115,6 +115,7 @@ def get_highest_probability_ranges_v3(
 
     # v3 모델 출력이 배율(예: 1.0012)이라면 percent로 변환해서 구간을 만들면 보기 좋음
     values = yq * 100.0 if output_as_percent else yq
+    actual_bin_width = bin_width * 100 if output_as_percent else bin_width  # ← 추가
 
     # inverse CDF 샘플링 (quantiles: 0.05~0.95 + 0.5)
     qs = np.array(QUANTILES, dtype=float)
@@ -128,8 +129,12 @@ def get_highest_probability_ranges_v3(
 
     # histogram
     mn, mx = float(samples.min()), float(samples.max())
-    # bin_width 간격으로 bin 생성
-    edges = np.arange(np.floor(mn/bin_width)*bin_width, np.ceil(mx/bin_width)*bin_width + bin_width, bin_width)
+    # actual_bin_width 간격으로 bin 생성
+    edges = np.arange(
+        np.floor(mn / actual_bin_width) * actual_bin_width,
+        np.ceil(mx / actual_bin_width) * actual_bin_width + actual_bin_width,
+        actual_bin_width  # ← bin_width → actual_bin_width 로 3곳 변경
+    )
     hist, edges = np.histogram(samples, bins=edges)
     probs = hist / hist.sum()
 
@@ -142,8 +147,6 @@ def get_highest_probability_ranges_v3(
         center = (low + high) / 2.0
         prob = float(probs[idx])
 
-        # 보기 형식: 89.7% ~ 89.6% 같이(소수 1자리) + center는 2자리
-        # (표시 순서가 high~low로 나가길 원하면 아래처럼)
         range_display = f"{high:.1f}% ~ {low:.1f}%"
         top_ranges.append({
             "range": [low, high],
